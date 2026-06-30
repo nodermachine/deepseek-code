@@ -172,9 +172,10 @@ interface ChatRequest {
   - **不能** 把 `reasoning_content` 塞回下一轮 messages（官方明确要求）
   - Provider 层分离为 `event: thinking_delta`，CLI 用折叠灰字展示
   - 后续轮次 messages 只回传 `content` + `tool_calls`
-- **R1 不支持 function calling**（截至 2026-01）：
+- **R1 function calling 支持状态**：截至本 spec 撰写时（2026-06），R1 对工具调用的支持仍不稳定/受限。
   - 阶段一默认 `deepseek-chat`
   - 用户显式选 R1 → 自动降级到"无工具"对话模式 + 警告
+  - 实现前由开发者验证当下 R1 API 行为，若已稳定支持则可去掉降级逻辑（写入 v0.1 release note）
 - **上下文**：V3 64K / R1 64K reasoning + 8K output；阶段一仅做硬截断保护（接近上限 → 报错让用户开新会话），不做 compact
 - **重试**：429 / 5xx → 指数退避（最多 3 次，初始 1s，倍率 2，上限 8s）；网络错误同
 - **SSE 解析**：`eventsource-parser`；中途断流 → 整轮重试一次（messages 不变）
@@ -211,9 +212,9 @@ type ToolResult<O> =
 | 工具 | 行为 | 权限 |
 |---|---|---|
 | **Read** | 读绝对路径文件，cat -n 风格返回；默认 2000 行；支持 offset/limit；二进制拒绝 | 全部 allow |
-| **Edit** | 精确字符串替换：`file_path` + `old_string` + `new_string`，唯一性校验；要求该路径已在本 session 内被 Read 过 | 首次写 ask |
+| **Edit** | 精确字符串替换：`file_path` + `old_string` + `new_string`；`old_string` 必须在文件中唯一出现，否则返回 `ok:false, error:"non_unique_match"` 让模型扩大上下文重试；要求该路径已在本 session 内被 Read 过 | 首次写 ask（同 session 同绝对路径，后续 allow） |
 | **Write** | 覆盖写整文件；要求已 Read 过（除非是新文件） | 首次写 ask |
-| **Bash** | 执行 shell 命令；默认 30s 超时，可配；捕获 stdout+stderr+exitCode；`cwd` 强制为项目根 | 按命令首 token ask |
+| **Bash** | 执行 shell 命令；默认 30s 超时，可配；捕获 stdout+stderr+exitCode；`cwd` 强制为项目根 | 按命令"特征前缀" ask（见下） |
 | **Grep** | ripgrep wrapper，支持 pattern / path / glob / `-i` / `-n` / context | 全部 allow |
 
 **会话内"已读文件"追踪**：放在 `Session.readFiles: Set<string>`，Edit/Write 前查；写入后也更新（写完算读过）。
@@ -240,7 +241,10 @@ interface PermissionRule {
 
 - `Read`、`Grep`：全部 allow
 - `Edit`、`Write`：默认 ask，**按文件绝对路径**粒度记忆
-- `Bash`：默认 ask，**按命令首 token**粒度（`git status` → 记 `git status`；`npm test` → 记 `npm test`）
+- `Bash`：默认 ask，**按命令"特征前缀"** 粒度：
+  - 已知子命令型工具列表（`git` / `npm` / `pnpm` / `yarn` / `pip` / `cargo` / `go` / `kubectl` / `docker` …）→ 取前两个 token，例 `git status -s` → 记 `git status`
+  - 不在列表中 → 取第一个 token，例 `ls -la` → 记 `ls`
+  - 同一前缀允许后续任意参数（不再 ask）
 - **硬黑名单**（任何 ask 都不允许 allow，直接 deny）：`rm -rf /`、`sudo`、fork bomb `:(){ :|:& };:` 等明显危险模式
 
 ### ask 交互
