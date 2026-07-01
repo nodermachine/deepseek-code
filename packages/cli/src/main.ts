@@ -101,6 +101,8 @@ export async function main(argv: string[]): Promise<number> {
       { tool: 'Edit', matcher: '*', decision: 'allow' },
       { tool: 'Bash', matcher: '*', decision: 'allow' },
     ],
+    // 敏感路径：编辑关键文件时强制确认（即使全局 allow）
+    sensitivePaths: config.sensitivePaths,
   });
   const sessionStore = new DiskSessionStore();
 

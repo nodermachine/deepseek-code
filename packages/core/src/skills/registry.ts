@@ -4,17 +4,38 @@
  */
 import type { Skill } from './types.js';
 import { loadSkills, type LoadSkillsOpts } from './loader.js';
+import { getBuiltinSkills } from './builtin.js';
 
 /**
  * SkillRegistry 负责加载和管理所有 Skills
  * 提供按触发类型（always/command/auto）查询的能力
+ *
+ * 内置 skill（systematic-debugging / brainstorming / verification-before-completion）
+ * 总是先注入。磁盘加载出来的同名 skill 会覆盖内置版本——留给高级用户一个逃生口。
  */
+export interface SkillRegistryOpts {
+  /** 是否注入内置流程 skill，默认 true。测试里可以传 false 得到干净的 registry。 */
+  builtins?: boolean;
+}
+
 export class SkillRegistry {
   private skills: Skill[] = [];
+  private includeBuiltins: boolean;
 
-  /** 从磁盘加载 skills（用户级 + 项目级） */
+  constructor(opts: SkillRegistryOpts = {}) {
+    this.includeBuiltins = opts.builtins !== false;
+    if (this.includeBuiltins) this.skills = getBuiltinSkills();
+  }
+
+  /** 从磁盘加载 skills（用户级 + 项目级）。同名会覆盖内置版本。 */
   loadFromDisk(opts: LoadSkillsOpts): void {
-    this.skills = loadSkills(opts);
+    const disk = loadSkills(opts);
+    const byName = new Map<string, Skill>();
+    if (this.includeBuiltins) {
+      for (const s of getBuiltinSkills()) byName.set(s.name, s);
+    }
+    for (const s of disk) byName.set(s.name, s);
+    this.skills = [...byName.values()];
   }
 
   /** 获取所有 always-on skills（总是注入 system prompt） */

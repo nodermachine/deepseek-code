@@ -30,6 +30,15 @@ const ConfigSchema = z.object({
   baseUrl: z.string().url().default(DEFAULT_CONFIG.baseUrl),
   bashTimeoutMs: z.number().int().positive().default(DEFAULT_CONFIG.bashTimeoutMs),
   maxSteps: z.number().int().positive().default(DEFAULT_CONFIG.maxSteps),
+  /** 敏感路径 glob 列表，编辑这些路径时需确认（支持 ** 通配符） */
+  sensitivePaths: z.array(z.string()).default([
+    '**/agent/loop.ts',
+    '**/permission/**',
+    '**/skills/loader.ts',
+    '**/skills/registry.ts',
+    '**/memory/loader.ts',
+    '**/config.ts',
+  ]),
   /** MCP Server 配置（可选） */
   mcpServers: z.record(z.object({
     type: z.enum(['stdio', 'sse']),

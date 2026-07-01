@@ -18,6 +18,8 @@ export * from './memory/loader.js';
 export * from './skills/types.js';
 export * from './skills/loader.js';
 export * from './skills/registry.js';
+export * from './skills/builtin.js';
+export * from './skills/lint.js';
 export * from './skills/resolver.js';
 export * from './skills/manifest.js';
 export * from './skills/installer.js';

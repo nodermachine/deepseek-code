@@ -37,6 +37,6 @@ export async function runLogin(stdin: NodeJS.ReadableStream, stdout: NodeJS.Writ
   if (!apiKey.startsWith('sk-')) {
     stdout.write('⚠️  API key 格式可能不正确（通常以 sk- 开头），已保存。\n');
   }
-  writeConfig({ apiKey, model: DEFAULT_CONFIG.model, baseUrl: DEFAULT_CONFIG.baseUrl, bashTimeoutMs: DEFAULT_CONFIG.bashTimeoutMs, maxSteps: DEFAULT_CONFIG.maxSteps }, opts);
+  writeConfig({ apiKey, model: DEFAULT_CONFIG.model, baseUrl: DEFAULT_CONFIG.baseUrl, bashTimeoutMs: DEFAULT_CONFIG.bashTimeoutMs, maxSteps: DEFAULT_CONFIG.maxSteps, sensitivePaths: [] }, opts);
   stdout.write('✅ 已保存到 ~/.deepseek-code/config.json\n');
 }

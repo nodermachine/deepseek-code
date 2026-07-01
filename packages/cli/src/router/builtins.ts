@@ -32,7 +32,7 @@ const BUILTINS: Array<{ name: string; description: string; argumentHint?: string
   { name: 'sessions', description: '列出历史会话' },
   { name: 'compact', description: '手动触发历史压缩' },
   { name: 'memory', description: '打开 DEEPSEEK.md 编辑', argumentHint: '[user]' },
-  { name: 'init', description: '生成 commands 目录骨架' },
+  { name: 'init', description: '初始化项目配置（DEEPSEEK.md + commands 目录）' },
   { name: 'resume', description: 'REPL 内切换会话', argumentHint: '<id>' },
   { name: 'quit', description: '退出 REPL' },
 ];
@@ -167,19 +167,54 @@ export async function runBuiltin(
     case 'init': {
       const fs = await import('node:fs');
       const path = await import('node:path');
+      const readline = await import('node:readline');
+      let created = 0;
+
+      // 1. 生成 DEEPSEEK.md（项目级记忆文件）
+      const mdPath = path.join(ctx.cwd, 'DEEPSEEK.md');
+      const mdPathAlt = path.join(ctx.cwd, '.deepseek-code', 'DEEPSEEK.md');
+      if (!fs.existsSync(mdPath) && !fs.existsSync(mdPathAlt)) {
+        w(pc.bold('\n初始化项目 DEEPSEEK.md\n'));
+        w(pc.gray('回答 3 个问题帮助 Agent 更好地理解项目（直接回车跳过）\n\n'));
+
+        const ask = (q: string): Promise<string> => {
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          return new Promise(res => rl.question(q, a => { rl.close(); res(a.trim()); }));
+        };
+
+        const lang = await ask(pc.cyan('1. 项目使用什么语言/框架？ '));
+        const conventions = await ask(pc.cyan('2. Agent 绝对不能违反的规范？ '));
+        const confusing = await ask(pc.cyan('3. 代码中容易让人困惑的地方？ '));
+
+        const lines: string[] = ['# DEEPSEEK.md', '', '> 此文件帮助 deepseek-code 理解项目背景。Agent 每次启动时自动注入 system prompt。', ''];
+        if (lang) lines.push(`## 技术栈`, '', lang, '');
+        if (conventions) lines.push(`## 不可违反的规范`, '', conventions, '');
+        if (confusing) lines.push(`## 需要注意的坑`, '', confusing, '');
+        if (!lang && !conventions && !confusing) {
+          lines.push('## 项目约定', '', '<!-- 在此添加项目规范、命名约定、架构决策等 -->', '');
+        }
+        lines.push('', '---', '', '> 使用 `/memory` 命令编辑此文件，或用 `#memory 内容` 快速追加。', '');
+
+        fs.writeFileSync(mdPath, lines.join('\n'));
+        w(pc.green(`\n✓ 已创建 ${mdPath}\n`));
+        created++;
+      } else {
+        w(pc.gray(`DEEPSEEK.md 已存在，跳过\n`));
+      }
+
+      // 2. 生成 commands 目录骨架
       const dir = path.join(ctx.cwd, '.deepseek-code', 'commands');
       fs.mkdirSync(dir, { recursive: true });
       const sample = path.join(dir, 'hello.md');
       if (!fs.existsSync(sample)) {
-        fs.writeFileSync(sample, `---
-description: Sample command
-argument-hint: <name>
----
-Say hello to $1. Extra: $ARGUMENTS
-`);
+        fs.writeFileSync(sample, `---\ndescription: Sample command\nargument-hint: <name>\n---\nSay hello to $1. Extra: $ARGUMENTS\n`);
+        w(pc.green(`✓ 已创建 ${dir}\n`));
+        w(pc.gray('  示例文件：hello.md → 输入 /hello world 触发\n'));
+        created++;
       }
-      w(pc.green(`✓ 已创建 ${dir}\n`));
-      w(pc.gray('  示例文件：hello.md → 输入 /hello world 触发\n'));
+
+      if (created === 0) w(pc.gray('所有文件已存在，无需初始化\n'));
+      w('\n');
       return;
     }
     case 'resume': {

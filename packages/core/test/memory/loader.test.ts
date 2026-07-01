@@ -87,4 +87,16 @@ describe('buildSystemPrompt', () => {
     rmSync(cwd, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   });
+
+  it('embeds the diagnosis protocol and verify-before-done rules', () => {
+    const cwd = mkDir();
+    const home = mkDir();
+    const prompt = buildSystemPrompt({ cwd, homeDir: home });
+    expect(prompt).toContain('诊断协议');
+    expect(prompt).toContain('sibling');
+    expect(prompt).toContain('VERIFY-BEFORE-DONE');
+    expect(prompt).toContain('必须重新运行触发原问题');
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
 });

@@ -70,7 +70,28 @@ export function createDefaultHooks(opts: {
       },
     },
 
-    // Hook 3: 错误追踪 — 记录所有 provider/工具错误到日志
+    // Hook 3: 敏感路径警告 — Edit/Write 命中核心基础设施时提醒用户
+    // 不硬拦，只打警告 + 记日志。用户想 hard-block 可以走 permission 白名单。
+    {
+      name: 'builtin:sensitive-path-guard',
+      point: 'beforeToolExecute',
+      priority: 20,
+      handler: (ctx: HookContext) => {
+        if (ctx.data.type !== 'beforeToolExecute') return;
+        if (ctx.data.toolName !== 'Edit' && ctx.data.toolName !== 'Write') return;
+        const input = ctx.data.input as { file_path?: string };
+        const path = input.file_path ?? '';
+        if (!path || !isSensitivePath(path)) return;
+        logger.warn('editing sensitive path', { toolName: ctx.data.toolName, path });
+        stdout.write(
+          `\x1b[33m⚠ 敏感路径:\x1b[0m ${path}\n` +
+          `  这是核心基础设施文件（loader/registry/permission/agent 等）。\n` +
+          `  建议改前先用 /plan 走一遍思路；改完务必按 verify-before-done 复现原场景。\n`,
+        );
+      },
+    },
+
+    // Hook 4: 错误追踪 — 记录所有 provider/工具错误到日志
     {
       name: 'builtin:error-tracker',
       point: 'onError',
@@ -85,7 +106,7 @@ export function createDefaultHooks(opts: {
       },
     },
 
-    // Hook 4: 轮次统计 — loop 结束时输出 token 消耗
+    // Hook 5: 轮次统计 — loop 结束时输出 token 消耗
     {
       name: 'builtin:turn-stats',
       point: 'onDone',
@@ -101,6 +122,25 @@ export function createDefaultHooks(opts: {
       },
     },
   ];
+}
+
+/**
+ * 判断文件路径是否属于"敏感基础设施"。
+ * 这些是编辑一个字就可能让整个 agent 表现异常的核心文件。
+ * 触到时打警告，鼓励用户切 plan 模式。
+ */
+export function isSensitivePath(path: string): boolean {
+  const p = path.replace(/\\/g, '/');
+  const patterns: RegExp[] = [
+    /packages\/core\/src\/(agent|permission|skills|commands|memory|provider|session|hooks)\/[^/]+\.ts$/,
+    /packages\/core\/src\/(loader|registry|resolver)\.ts$/,
+    /packages\/cli\/src\/(main|repl|router)/,
+    /packages\/tools\/src\/(edit|write|bash|read)\.ts$/,
+    /\/(loader|registry|permission|resolver)\.ts$/,
+    /^\.deepseek-code\/permissions\.json$/,
+    /\.deepseek-code\/hooks/,
+  ];
+  return patterns.some((re) => re.test(p));
 }
 
 /**

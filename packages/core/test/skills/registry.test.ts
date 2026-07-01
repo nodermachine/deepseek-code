@@ -19,7 +19,7 @@ function makeSkill(overrides: Partial<Skill>): Skill {
 
 describe('SkillRegistry', () => {
   it('getAlwaysOn returns only always-trigger skills', () => {
-    const reg = new SkillRegistry();
+    const reg = new SkillRegistry({ builtins: false });
     reg.register(makeSkill({ name: 'a', trigger: { type: 'always' } }));
     reg.register(makeSkill({ name: 'b', trigger: { type: 'command', name: 'b' } }));
     reg.register(makeSkill({ name: 'c', trigger: { type: 'auto', keywords: ['x'] } }));
@@ -30,7 +30,7 @@ describe('SkillRegistry', () => {
   });
 
   it('getByCommand finds correct skill', () => {
-    const reg = new SkillRegistry();
+    const reg = new SkillRegistry({ builtins: false });
     reg.register(makeSkill({ name: 'review', trigger: { type: 'command', name: 'review' } }));
     reg.register(makeSkill({ name: 'deploy', trigger: { type: 'command', name: 'deploy' } }));
 
@@ -40,7 +40,7 @@ describe('SkillRegistry', () => {
   });
 
   it('matchByKeywords matches case-insensitively', () => {
-    const reg = new SkillRegistry();
+    const reg = new SkillRegistry({ builtins: false });
     reg.register(makeSkill({
       name: 'react',
       trigger: { type: 'auto', keywords: ['react', 'component'] },
@@ -56,7 +56,7 @@ describe('SkillRegistry', () => {
   });
 
   it('matchByKeywords returns empty for no match', () => {
-    const reg = new SkillRegistry();
+    const reg = new SkillRegistry({ builtins: false });
     reg.register(makeSkill({
       name: 'react',
       trigger: { type: 'auto', keywords: ['react'] },
@@ -66,7 +66,7 @@ describe('SkillRegistry', () => {
   });
 
   it('matchByKeywords ignores non-auto skills', () => {
-    const reg = new SkillRegistry();
+    const reg = new SkillRegistry({ builtins: false });
     reg.register(makeSkill({ name: 'a', trigger: { type: 'always' } }));
     reg.register(makeSkill({ name: 'b', trigger: { type: 'command', name: 'b' } }));
 
@@ -74,7 +74,7 @@ describe('SkillRegistry', () => {
   });
 
   it('register overrides same-name skill', () => {
-    const reg = new SkillRegistry();
+    const reg = new SkillRegistry({ builtins: false });
     reg.register(makeSkill({ name: 'x', description: 'v1' }));
     reg.register(makeSkill({ name: 'x', description: 'v2' }));
 
@@ -83,7 +83,7 @@ describe('SkillRegistry', () => {
   });
 
   it('list returns all skills', () => {
-    const reg = new SkillRegistry();
+    const reg = new SkillRegistry({ builtins: false });
     reg.register(makeSkill({ name: 'a' }));
     reg.register(makeSkill({ name: 'b' }));
     reg.register(makeSkill({ name: 'c' }));
