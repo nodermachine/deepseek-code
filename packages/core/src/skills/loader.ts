@@ -1,7 +1,22 @@
 /**
  * @file Skills 文件系统加载器
- * 从 ~/.deepseek-code/skills/ 和 <cwd>/.deepseek-code/skills/ 加载 .md 技能文件
- * 解析 HTML 注释中的 trigger/keywords 元数据
+ *
+ * 从 ~/.deepseek-code/skills/ 和 <cwd>/.deepseek-code/skills/ 加载 skill。
+ *
+ * 一个 skill = 一个 `SKILL.md` 文件（在其独立目录下），或直接一个 `<name>.md` 文件。
+ * 如果目录里有 `SKILL.md`，则该目录整体算一个 skill，其余 `.md` 文件视为参考材料忽略。
+ *
+ * 元数据格式（对齐 Anthropic / skills.sh 生态）：
+ *   1. YAML frontmatter（首选）：
+ *      ---
+ *      name: ...
+ *      description: ...
+ *      trigger: always | command | auto
+ *      keywords: kw1, kw2   或   [kw1, kw2]
+ *      ---
+ *   2. 向后兼容：HTML 注释 `<!-- trigger: xxx -->` / `<!-- keywords: ... -->`
+ *
+ * 若两种都有，YAML 优先。
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, basename, relative } from 'node:path';
@@ -9,132 +24,190 @@ import { homedir } from 'node:os';
 import type { Skill, SkillTrigger } from './types.js';
 
 export interface LoadSkillsOpts {
-  /** 当前工作目录 */
   cwd: string;
-  /** 自定义 home 目录（测试用） */
   homeDir?: string;
 }
 
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
+
 /**
- * 从文件系统加载所有 skills
- * 加载顺序：用户级 → 项目级（同名时项目级覆盖用户级）
+ * 从文件系统加载所有 skills。用户级 → 项目级；同名时项目级覆盖。
  */
 export function loadSkills(opts: LoadSkillsOpts): Skill[] {
   const home = opts.homeDir ?? homedir();
   const skills = new Map<string, Skill>();
 
-  // 用户级 skills
   const userDir = join(home, '.deepseek-code', 'skills');
   loadFromDir(userDir, skills);
 
-  // 项目级 skills（同名覆盖用户级）
   const projectDir = join(opts.cwd, '.deepseek-code', 'skills');
   loadFromDir(projectDir, skills);
 
   return [...skills.values()];
 }
 
-/** 从指定目录递归加载所有 .md 文件为 Skill */
 function loadFromDir(dir: string, skills: Map<string, Skill>): void {
   if (!existsSync(dir)) return;
-  loadDirRecursive(dir, dir, skills);
+  walkAsSkillTree(dir, dir, skills);
 }
 
 /**
- * 递归扫描目录加载 .md 文件
- * 用相对于 baseDir 的路径生成唯一 skill name（如 superpowers/brainstorming）
+ * 递归扫描目录：
+ * - 当前目录若有 `SKILL.md`：视为整目录是一个 skill，不再递归。
+ * - 否则：目录里的 `<name>.md` 各自算 skill；子目录继续递归。
+ *
+ * `.installed.json`、`.` 开头的隐藏文件全部跳过。
  */
-function loadDirRecursive(currentDir: string, baseDir: string, skills: Map<string, Skill>): void {
-  const entries = readdirSync(currentDir);
+function walkAsSkillTree(currentDir: string, baseDir: string, skills: Map<string, Skill>): void {
+  let entries: string[];
+  try { entries = readdirSync(currentDir); } catch { return; }
+
+  const hasSkillMd = entries.some((e) => e.toUpperCase() === 'SKILL.MD');
+  if (hasSkillMd) {
+    const skillPath = join(currentDir, entries.find((e) => e.toUpperCase() === 'SKILL.MD')!);
+    const relDir = relative(baseDir, currentDir);
+    const skillName = relDir || basename(currentDir);
+    const raw = safeRead(skillPath);
+    if (raw !== null) {
+      const s = parseSkillFile(raw, skillPath, skillName);
+      if (s) skills.set(s.name, s);
+    }
+    return; // 不再深入递归；references / tests / 子目录都是本 skill 的支持材料
+  }
+
   for (const entry of entries) {
     if (entry.startsWith('.')) continue;
-    const fullPath = join(currentDir, entry);
-    try {
-      const stat = statSync(fullPath);
-      if (stat.isFile() && entry.endsWith('.md')) {
-        const raw = readFileSync(fullPath, 'utf8');
-        // 生成唯一 skill name：
-        // - SKILL.md 用父目录名（如 brainstorming）
-        // - 其他文件用相对路径（如 brainstorming/visual-companion）
-        const relDir = relative(baseDir, currentDir);
-        const fileBase = basename(fullPath, '.md');
-        let skillName: string;
-        if (fileBase.toLowerCase() === 'skill') {
-          // SKILL.md → 用父目录名作为 name
-          skillName = relDir || fileBase;
-        } else {
-          skillName = relDir ? `${relDir}/${fileBase}` : fileBase;
-        }
-        const skill = parseSkillFile(raw, fullPath, skillName);
-        if (skill) skills.set(skill.name, skill);
-      } else if (stat.isDirectory()) {
-        loadDirRecursive(fullPath, baseDir, skills);
-      }
-    } catch {
-      // 跳过解析失败的文件
+    const full = join(currentDir, entry);
+    let stat;
+    try { stat = statSync(full); } catch { continue; }
+
+    if (stat.isFile() && entry.toLowerCase().endsWith('.md')) {
+      const raw = safeRead(full);
+      if (raw === null) continue;
+      const relDir = relative(baseDir, currentDir);
+      const fileBase = basename(entry, '.md');
+      const skillName = relDir ? `${relDir}/${fileBase}` : fileBase;
+      const s = parseSkillFile(raw, full, skillName);
+      if (s) skills.set(s.name, s);
+    } else if (stat.isDirectory()) {
+      walkAsSkillTree(full, baseDir, skills);
     }
   }
 }
 
+function safeRead(path: string): string | null {
+  try { return readFileSync(path, 'utf8'); } catch { return null; }
+}
+
 /**
- * 解析单个 Markdown 技能文件
- * 格式约定：
- * ```markdown
- * # 技能标题
- *
- * <!-- trigger: always|command|auto -->
- * <!-- keywords: keyword1, keyword2 -->
- *
- * 正文内容
- * ```
+ * 解析单个 Markdown skill 文件。
+ * `nameOverride` 用于让上层控制 name（避免 SKILL.md 全叫 "SKILL"）。
  */
 export function parseSkillFile(raw: string, filePath: string, nameOverride?: string): Skill | null {
-  const lines = raw.split('\n');
+  // 1) YAML frontmatter
+  const fmMatch = raw.match(FRONTMATTER_RE);
+  const fm = fmMatch ? parseYamlLite(fmMatch[1]) : {};
+  const body = fmMatch ? raw.slice(fmMatch[0].length) : raw;
 
-  // 提取标题（第一个 # 开头的行）
-  const titleLine = lines.find(l => l.startsWith('# '));
-  const description = titleLine ? titleLine.slice(2).trim() : basename(filePath, '.md');
-  // 使用 nameOverride（相对路径）或文件名作为 skill name
-  const name = nameOverride ?? basename(filePath, '.md');
+  const lines = body.split('\n');
+  const titleLine = lines.find((l) => l.startsWith('# '));
 
-  // 解析元数据注释
-  const trigger = parseTrigger(raw, name);
+  const fallbackName =
+    nameOverride ?? basename(filePath, '.md');
+  const name = typeof fm.name === 'string' && fm.name.trim() ? fm.name.trim() : fallbackName;
 
-  // 正文：去除 # 标题行和 <!-- ... --> 元数据行
-  const contentLines = lines.filter(l => {
+  const description = typeof fm.description === 'string' && fm.description.trim()
+    ? fm.description.trim()
+    : titleLine
+      ? titleLine.slice(2).trim()
+      : name;
+
+  const trigger = resolveTrigger(fm, body, name);
+
+  // 2) 剥去 H1 与 HTML 元注释
+  const bodyLines = lines.filter((l) => {
     if (l.startsWith('# ') && l === titleLine) return false;
-    if (/^\s*<!--\s*(trigger|keywords)\s*:/.test(l)) return false;
+    if (/^\s*<!--\s*(trigger|keywords)\s*:/i.test(l)) return false;
     return true;
   });
-  const content = contentLines.join('\n').trim();
-
+  const content = bodyLines.join('\n').trim();
   if (!content) return null;
 
   return { name, description, trigger, content, filePath };
 }
 
 /**
- * 从 Markdown 中解析触发器元数据
- * 支持格式：<!-- trigger: always --> 或 <!-- trigger: command --> 或 <!-- trigger: auto -->
+ * 极简 YAML 解析：只支持 `key: value` 与数组字面量 `[a, b]`。
+ * 值是纯字符串；数组解析成 string[]；其它一律当字符串保留原样。
  */
-function parseTrigger(raw: string, name: string): SkillTrigger {
-  // 匹配 <!-- trigger: xxx -->
-  const triggerMatch = raw.match(/<!--\s*trigger\s*:\s*(\w+)\s*-->/);
-  const triggerType = triggerMatch?.[1]?.toLowerCase() ?? 'command';
+function parseYamlLite(src: string): Record<string, string | string[]> {
+  const out: Record<string, string | string[]> = {};
+  for (const rawLine of src.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const idx = line.indexOf(':');
+    if (idx <= 0) continue;
+    const key = line.slice(0, idx).trim();
+    const rest = line.slice(idx + 1).trim();
+    if (!rest) { out[key] = ''; continue; }
+    if (rest.startsWith('[') && rest.endsWith(']')) {
+      out[key] = rest.slice(1, -1).split(',').map((s) => stripQuotes(s.trim())).filter(Boolean);
+    } else {
+      out[key] = stripQuotes(rest);
+    }
+  }
+  return out;
+}
+
+function stripQuotes(s: string): string {
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
+/**
+ * 触发器解析优先级：YAML frontmatter > HTML 注释 > 默认 command。
+ */
+function resolveTrigger(
+  fm: Record<string, string | string[]>,
+  body: string,
+  name: string,
+): SkillTrigger {
+  const yamlTrigger =
+    typeof fm.trigger === 'string' ? fm.trigger.toLowerCase().trim() : '';
+  const htmlMatch = body.match(/<!--\s*trigger\s*:\s*(\w+)\s*-->/i);
+  const htmlTrigger = htmlMatch ? htmlMatch[1].toLowerCase() : '';
+  const triggerType = yamlTrigger || htmlTrigger || 'command';
 
   switch (triggerType) {
     case 'always':
       return { type: 'always' };
     case 'auto': {
-      // 解析 keywords
-      const kwMatch = raw.match(/<!--\s*keywords\s*:\s*(.+?)\s*-->/);
-      const keywords = kwMatch
-        ? kwMatch[1].split(',').map(k => k.trim()).filter(Boolean)
-        : [name];
+      const keywords = extractKeywords(fm, body, name);
       return { type: 'auto', keywords };
     }
     case 'command':
     default:
       return { type: 'command', name };
   }
+}
+
+function extractKeywords(
+  fm: Record<string, string | string[]>,
+  body: string,
+  name: string,
+): string[] {
+  if (Array.isArray(fm.keywords)) {
+    const arr = fm.keywords.filter((k) => typeof k === 'string' && k.trim().length > 0);
+    if (arr.length) return arr;
+  }
+  if (typeof fm.keywords === 'string' && fm.keywords.trim()) {
+    return fm.keywords.split(',').map((k) => k.trim()).filter(Boolean);
+  }
+  const htmlKw = body.match(/<!--\s*keywords\s*:\s*(.+?)\s*-->/i);
+  if (htmlKw) {
+    return htmlKw[1].split(',').map((k) => k.trim()).filter(Boolean);
+  }
+  return [name];
 }

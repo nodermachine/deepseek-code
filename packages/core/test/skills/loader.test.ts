@@ -69,6 +69,105 @@ actual content here
   });
 });
 
+describe('parseSkillFile - YAML frontmatter (Anthropic/skills.sh standard)', () => {
+  it('parses YAML frontmatter with name, description, no explicit trigger', () => {
+    const raw = `---
+name: web-fetch
+description: 用无头浏览器抓取网页正文
+---
+
+# 联网抓取
+
+正文内容
+`;
+    const skill = parseSkillFile(raw, '/path/to/web-fetch.md');
+    expect(skill).not.toBeNull();
+    expect(skill!.name).toBe('web-fetch');
+    expect(skill!.description).toBe('用无头浏览器抓取网页正文');
+    expect(skill!.trigger).toEqual({ type: 'command', name: 'web-fetch' });
+    expect(skill!.content).not.toContain('---');
+    expect(skill!.content).not.toContain('name: web-fetch');
+    expect(skill!.content).toContain('正文内容');
+  });
+
+  it('parses YAML frontmatter with explicit trigger: auto and keywords', () => {
+    const raw = `---
+name: find-skills
+description: Find and install skills
+trigger: auto
+keywords: find skill, install skill, is there a skill
+---
+
+# Find Skills
+
+body
+`;
+    const skill = parseSkillFile(raw, '/path/to/find-skills/SKILL.md', 'find-skills');
+    expect(skill!.name).toBe('find-skills');
+    expect(skill!.description).toBe('Find and install skills');
+    expect(skill!.trigger).toEqual({
+      type: 'auto',
+      keywords: ['find skill', 'install skill', 'is there a skill'],
+    });
+  });
+
+  it('YAML trigger: always works too', () => {
+    const raw = `---
+name: p9
+description: think like a P9
+trigger: always
+---
+
+# P9
+
+body
+`;
+    const skill = parseSkillFile(raw, '/path/to/p9/SKILL.md', 'p9');
+    expect(skill!.trigger).toEqual({ type: 'always' });
+  });
+
+  it('YAML description overrides H1 heading', () => {
+    const raw = `---
+description: The official description
+---
+
+# Different H1 title
+
+body
+`;
+    const skill = parseSkillFile(raw, '/x/s.md');
+    expect(skill!.description).toBe('The official description');
+  });
+
+  it('YAML keywords accepts array form too', () => {
+    const raw = `---
+trigger: auto
+keywords: [alpha, beta, gamma]
+---
+
+# T
+body
+`;
+    const skill = parseSkillFile(raw, '/x/s.md');
+    expect(skill!.trigger).toEqual({ type: 'auto', keywords: ['alpha', 'beta', 'gamma'] });
+  });
+
+  it('frontmatter block is stripped from content', () => {
+    const raw = `---
+name: x
+description: y
+---
+
+# Title
+
+meaningful body
+`;
+    const skill = parseSkillFile(raw, '/x/s.md');
+    expect(skill!.content.startsWith('---')).toBe(false);
+    expect(skill!.content).toContain('meaningful body');
+  });
+});
+
 describe('loadSkills', () => {
   it('loads skills from user and project dirs', () => {
     const home = mkdtempSync(join(tmpdir(), 'home-'));
@@ -115,6 +214,70 @@ describe('loadSkills', () => {
     const cwd = mkdtempSync(join(tmpdir(), 'proj-'));
     const skills = loadSkills({ cwd, homeDir: home });
     expect(skills).toHaveLength(0);
+    rmSync(home, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it('treats a subdirectory with SKILL.md as one skill and ignores its other .md files', () => {
+    const home = mkdtempSync(join(tmpdir(), 'home-'));
+    const cwd = mkdtempSync(join(tmpdir(), 'proj-'));
+    const userDir = join(home, '.deepseek-code', 'skills');
+    const p9Dir = join(userDir, 'p9');
+    const refsDir = join(p9Dir, 'references');
+    const testsDir = join(p9Dir, 'tests');
+    mkdirSync(refsDir, { recursive: true });
+    mkdirSync(testsDir, { recursive: true });
+
+    writeFileSync(
+      join(p9Dir, 'SKILL.md'),
+      `---\nname: p9\ndescription: think like a P9\ntrigger: command\n---\n\n# P9\n\nbody`,
+    );
+    // Reference files must NOT be loaded as separate skills
+    writeFileSync(join(refsDir, 'mental-model.md'), '# 心智模型\n\n参考材料');
+    writeFileSync(join(refsDir, 'templates.md'), '# 模板\n\n模板内容');
+    writeFileSync(join(testsDir, 'README.md'), '# 测试说明\n\n测试文档');
+
+    const skills = loadSkills({ cwd, homeDir: home });
+    expect(skills).toHaveLength(1);
+    expect(skills[0].name).toBe('p9');
+    expect(skills.find(s => s.name.includes('mental-model'))).toBeUndefined();
+    expect(skills.find(s => s.name.includes('templates'))).toBeUndefined();
+    expect(skills.find(s => s.name.includes('README'))).toBeUndefined();
+
+    rmSync(home, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it('flat <name>.md file (no SKILL.md inside a dir) still loads', () => {
+    const home = mkdtempSync(join(tmpdir(), 'home-'));
+    const cwd = mkdtempSync(join(tmpdir(), 'proj-'));
+    const userDir = join(home, '.deepseek-code', 'skills');
+    mkdirSync(userDir, { recursive: true });
+
+    writeFileSync(
+      join(userDir, 'quick-tip.md'),
+      `---\ndescription: quick tip\n---\n\n# tip\n\nbody`,
+    );
+    const skills = loadSkills({ cwd, homeDir: home });
+    expect(skills).toHaveLength(1);
+    expect(skills[0].name).toBe('quick-tip');
+
+    rmSync(home, { recursive: true, force: true });
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
+  it('multiple SKILL.md siblings coexist (each in own dir)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'home-'));
+    const cwd = mkdtempSync(join(tmpdir(), 'proj-'));
+    const userDir = join(home, '.deepseek-code', 'skills');
+    mkdirSync(join(userDir, 'a'), { recursive: true });
+    mkdirSync(join(userDir, 'b'), { recursive: true });
+    writeFileSync(join(userDir, 'a', 'SKILL.md'), '---\ndescription: A\n---\n\nbody a');
+    writeFileSync(join(userDir, 'b', 'SKILL.md'), '---\ndescription: B\n---\n\nbody b');
+
+    const skills = loadSkills({ cwd, homeDir: home });
+    expect(skills.map(s => s.name).sort()).toEqual(['a', 'b']);
+
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
   });
