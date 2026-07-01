@@ -132,6 +132,66 @@ Type-check `config.json` on load. Right now malformed config silently falls thro
 
 ---
 
+## P3 — Tech Debt & Engineering
+
+### 13. Sub-command routing refactor
+
+**Effort:** 0.5 day
+**Why:** Current `argv.includes('login')` pattern in main.ts will misfire if user input contains the word (e.g. `deepseek "fix login bug"`). Switch to proper commander `.command()` sub-commands.
+
+### 14. Extract `runTurn` from main.ts closure
+
+**Effort:** 0.5 day
+**Why:** The 100-line closure captures 10+ outer variables, making it untestable in isolation. Extract to a standalone function with explicit deps.
+
+### 15. Tools package unit tests
+
+**Effort:** 1 day
+**Why:** 8 tools with ZERO dedicated tests. Only verified indirectly via agent loop integration tests. Priority: bash (timeout/signal/env), edit (not-read guard), write (mkdir/overwrite).
+
+### 16. Skill lint wired into startup
+
+**Effort:** 1 hour
+**Why:** `skills/lint.ts` exists but never called. Users get no feedback on malformed skills. Wire into REPL start: `skills: 7 loaded, 2 warnings — /skills doctor`.
+
+### 17. VERSION single source of truth
+
+**Effort:** 0.5 hour
+**Why:** Version is hardcoded in `core/index.ts` ("0.3.0") AND `cli/main.ts` (.version("0.3.0")). Should read from package.json or a single const.
+
+---
+
+## P4 — UX Polish
+
+### 18. Streaming token cost display
+
+**Effort:** 0.5 day
+**Why:** Users have no cost awareness during execution. Show `$0.003 (cache 82%)` in status bar, updated on each `usage` event.
+
+### 19. `/doctor` self-diagnosis command
+
+**Effort:** 0.5 day
+**Why:** One command to check: config validity, API key reachability, rg installed, Node version, skills format, DEEPSEEK.md presence. Eliminates the "why doesn't it work" support loop.
+
+### 20. Session improvements
+
+**Effort:** 0.5 day
+- `deepseek --last` to resume most recent session
+- Auto-purge sessions older than 30 days
+- `/sessions` shows first user message preview (already partial)
+
+### 21. Incremental file index
+
+**Effort:** 1 day
+**Why:** `FileIndex.load()` synchronous full-scan blocks on large repos. Cache to `.deepseek-code/file-index.json`, incremental update via `git diff` on subsequent runs.
+
+### 22. `--dry-run` for edits
+
+**Effort:** 1 day
+**Why:** Show diff + ask confirm without writing to disk. Complements sensitive-path gate (item 4) for extra safety.
+
+---
+
 ## Non-goals / rejected
 
 - **Rewriting the agent loop to be "smarter"** — the bottleneck isn't the loop, it's the prompt + skills + verification rails around it.

@@ -12,7 +12,7 @@ import {
   ToolRegistry, PermissionEngine, DiskSessionStore,
   runAgentLoop, DeepseekProvider, DeepseekCodeError,
   buildSystemPrompt, needsCompact, compactMessages,
-  runPlanMode, SkillRegistry, HookManager,
+  runPlanMode, SkillRegistry, HookManager, VERSION, lintSkills,
 } from '@deepseek-code/core';
 import type { Session } from '@deepseek-code/core';
 import { readTool, grepTool, bashTool, editTool, writeTool, globTool, webFetchTool, todoWriteTool } from '@deepseek-code/tools';
@@ -29,7 +29,7 @@ export async function main(argv: string[]): Promise<number> {
   const program = new Command();
   program
     .name('deepseek')
-    .version('0.3.0')
+    .version(VERSION)
     .argument('[prompt...]', '一次性任务输入')
     .option('--model <name>', 'DeepSeek 模型', undefined)
     .option('--debug', '写入 JSONL 日志', false)
@@ -38,33 +38,52 @@ export async function main(argv: string[]): Promise<number> {
     .option('--plan', '规划模式：先生成计划，确认后再执行', false)
     .option('--no-tui', '禁用 Ink TUI，使用纯文本输出');
 
-  // login 子命令提前拦截
-  if (argv.includes('login')) {
-    await runLogin(process.stdin, process.stdout);
-    return 0;
-  }
+  // === 子命令注册（用 commander 标准方式，避免 argv.includes 误命中） ===
+  let subCommandRan = false;
 
-  // sessions 子命令
-  if (argv.includes('sessions')) {
-    return handleSessions(argv);
-  }
+  program.command('login')
+    .description('登录并保存 API Key')
+    .action(async () => {
+      subCommandRan = true;
+      await runLogin(process.stdin, process.stdout);
+    });
 
-  // install 子命令
-  if (argv.includes('install')) {
-    return handleInstall(argv);
-  }
+  program.command('sessions')
+    .description('管理历史会话')
+    .argument('[action]', 'rm')
+    .argument('[id]', '会话 ID')
+    .action(async (action?: string, id?: string) => {
+      subCommandRan = true;
+      handleSessions(action, id);
+    });
 
-  // uninstall 子命令
-  if (argv.includes('uninstall')) {
-    return await handleUninstall(argv);
-  }
+  program.command('install')
+    .description('安装技能包')
+    .argument('[source]', '来源（GitHub URL 等）')
+    .allowUnknownOption(true)
+    .action(async () => {
+      subCommandRan = true;
+      await handleInstall(argv);
+    });
 
-  // sync-skills 子命令：同步 ~/.claude/skills/ 到 ~/.deepseek-code/skills/
-  if (argv.includes('sync-skills')) {
-    return handleSyncSkills(argv);
-  }
+  program.command('uninstall')
+    .description('卸载技能包')
+    .argument('[name]', '技能名')
+    .allowUnknownOption(true)
+    .action(async () => {
+      subCommandRan = true;
+      await handleUninstall(argv);
+    });
+
+  program.command('sync-skills')
+    .description('同步 ~/.claude/skills/ 到 ~/.deepseek-code/skills/')
+    .action(async () => {
+      subCommandRan = true;
+      await handleSyncSkills(argv);
+    });
 
   program.parse(argv);
+  if (subCommandRan) return 0;
   const opts = program.opts<{ model?: string; debug: boolean; cwd: string; resume?: string; plan: boolean; tui: boolean }>();
   const args = program.args;
 
@@ -130,6 +149,12 @@ export async function main(argv: string[]): Promise<number> {
   const skillRegistry = new SkillRegistry();
   skillRegistry.loadFromDisk({ cwd });
   const alwaysOnSkills = skillRegistry.getAlwaysOn();
+
+  // Skill lint：检查已加载技能的健全性
+  const skillWarnings = lintSkills(skillRegistry.list());
+  if (skillWarnings.length > 0) {
+    process.stderr.write(pc.yellow(`skills: ${skillRegistry.list().length} loaded, ${skillWarnings.length} warnings \u2014 /skills doctor\n`));
+  }
 
   // 初始化 HookManager 并注册默认钩子
   const hookManager = new HookManager();
@@ -312,12 +337,10 @@ function teeAsync<T>(source: AsyncIterable<T>): [AsyncIterable<T>, AsyncIterable
  * - `deepseek sessions` — 列出历史会话
  * - `deepseek sessions rm <id>` — 删除指定会话
  */
-function handleSessions(argv: string[]): number {
+function handleSessions(action?: string, id?: string): number {
   const store = new DiskSessionStore();
-  const rmIdx = argv.indexOf('rm');
 
-  if (rmIdx !== -1 && argv[rmIdx + 1]) {
-    const id = argv[rmIdx + 1];
+  if (action === 'rm' && id) {
     store.delete(id);
     process.stdout.write(`已删除会话 ${id}\n`);
     return 0;

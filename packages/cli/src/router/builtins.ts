@@ -5,7 +5,7 @@
  */
 import pc from 'picocolors';
 import type { Session, SessionStore, SkillRegistry, Config, Provider } from '@deepseek-code/core';
-import { CommandRegistry, compactMessages } from '@deepseek-code/core';
+import { CommandRegistry, compactMessages, lintSkills, VERSION } from '@deepseek-code/core';
 
 export interface BuiltinCtx {
   session: Session;
@@ -33,6 +33,7 @@ const BUILTINS: Array<{ name: string; description: string; argumentHint?: string
   { name: 'compact', description: '手动触发历史压缩' },
   { name: 'memory', description: '打开 DEEPSEEK.md 编辑', argumentHint: '[user]' },
   { name: 'init', description: '初始化项目配置（DEEPSEEK.md + commands 目录）' },
+  { name: 'doctor', description: '自诊断：检查配置、工具、技能健全性' },
   { name: 'resume', description: 'REPL 内切换会话', argumentHint: '<id>' },
   { name: 'quit', description: '退出 REPL' },
 ];
@@ -214,6 +215,78 @@ export async function runBuiltin(
       }
 
       if (created === 0) w(pc.gray('所有文件已存在，无需初始化\n'));
+      w('\n');
+      return;
+    }
+    case 'doctor': {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const os = await import('node:os');
+      const { execSync } = await import('node:child_process');
+      w(pc.bold(`\n🩺 deepseek-code doctor (v${VERSION})\n\n`));
+      let issues = 0;
+
+      // 1. 配置检查
+      if (ctx.config) {
+        w(pc.green('✓') + ' config.json 已加载\n');
+        if (ctx.config.apiKey && ctx.config.apiKey.startsWith('sk-')) {
+          w(pc.green('✓') + ' API Key 格式正确\n');
+        } else {
+          w(pc.red('✗') + ' API Key 格式可能不正确\n'); issues++;
+        }
+      } else {
+        w(pc.red('✗') + ' config.json 未找到\n'); issues++;
+      }
+
+      // 2. Node 版本
+      const nodeVer = process.version;
+      const major = parseInt(nodeVer.slice(1));
+      if (major >= 20) {
+        w(pc.green('✓') + ` Node ${nodeVer}\n`);
+      } else {
+        w(pc.red('✗') + ` Node ${nodeVer} (需要 >=20)\n`); issues++;
+      }
+
+      // 3. ripgrep
+      try {
+        execSync('rg --version', { stdio: 'pipe' });
+        w(pc.green('✓') + ' ripgrep (rg) 已安装\n');
+      } catch {
+        w(pc.red('✗') + ' ripgrep (rg) 未安装 \u2014 Grep 工具将不可用\n'); issues++;
+      }
+
+      // 4. DEEPSEEK.md
+      const mdPath = path.join(ctx.cwd, 'DEEPSEEK.md');
+      const mdPath2 = path.join(ctx.cwd, '.deepseek-code', 'DEEPSEEK.md');
+      if (fs.existsSync(mdPath) || fs.existsSync(mdPath2)) {
+        w(pc.green('✓') + ' 项目 DEEPSEEK.md 已存在\n');
+      } else {
+        w(pc.yellow('△') + ' 项目 DEEPSEEK.md 不存在 \u2014 运行 /init 创建\n');
+      }
+
+      // 5. Skills
+      if (ctx.skillRegistry) {
+        const skills = ctx.skillRegistry.list();
+        const warnings = lintSkills(skills);
+        w(pc.green('✓') + ` ${skills.length} 个技能已加载`);
+        if (warnings.length > 0) {
+          w(pc.yellow(` (${warnings.length} 个警告)`) + '\n');
+          for (const warn of warnings.slice(0, 5)) {
+            w(`    ${pc.yellow('△')} ${warn.skillName}: ${warn.message}\n`);
+          }
+          issues += warnings.length;
+        } else {
+          w('\n');
+        }
+      }
+
+      // 总结
+      w('\n');
+      if (issues === 0) {
+        w(pc.green(pc.bold('✓ 所有检查通过\n')));
+      } else {
+        w(pc.yellow(`${issues} 个问题需要关注\n`));
+      }
       w('\n');
       return;
     }
