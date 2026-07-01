@@ -105,17 +105,59 @@ deepseek sessions rm <id>       # Delete a session
 
 ## REPL Slash Commands
 
-Press `/` to see command suggestions with Tab completion:
+Type `/` to open a fuzzy-matched command menu. Use ↑↓ to select, Enter/Tab to submit, Esc to close.
 
 | Command | Description |
 |---------|-------------|
-| `/help` | Show available commands |
+| `/help` | Show grouped list of all commands |
 | `/model [name]` | View or switch model |
-| `/plan <prompt>` | Enter plan mode (plan first, then execute) |
+| `/plan <prompt>` | Enter plan mode |
 | `/clear` | Clear current session history |
 | `/sessions` | List historical sessions |
+| `/resume <id>` | Switch to another session inside the REPL |
 | `/compact` | Manually trigger history compression |
+| `/config` | Show effective configuration |
+| `/skills` | List available skills |
+| `/memory [user]` | Open `DEEPSEEK.md` in `$EDITOR` |
+| `/init` | Scaffold `.deepseek-code/commands/` skeleton |
 | `/quit` | Exit REPL |
+
+### User-defined commands
+
+Drop Markdown files under `.deepseek-code/commands/` (project) or `~/.deepseek-code/commands/` (user):
+
+```markdown
+---
+description: Create a PR with a smart summary
+argument-hint: <base-branch>
+allowed-tools: [Bash, Read, Grep]
+model: deepseek-chat
+---
+Please open a PR against $1. Extra: $ARGUMENTS
+```
+
+- `$1 $2 …` = positional args; `$ARGUMENTS` = the full arg string
+- Subdirectories become colon namespaces: `commands/git/pr.md` → `/git:pr`
+- Priority when names collide: **builtin > project > user > skill**
+
+### Trigger characters
+
+- `@path` — attach a file reference (fuzzy autocomplete over git-tracked + cwd files); the reference is passed to the agent as a `[attached files]` note
+- `#text` — append `text` to `DEEPSEEK.md`; a small prompt lets you pick project or user scope, and the system prompt is hot-reloaded
+
+### Keyboard shortcuts
+
+| Key | Behavior |
+|---|---|
+| ↑ / ↓ | History nav (no menu) / move highlight (menu open) |
+| Enter | Submit turn / apply selected suggestion |
+| Tab | Apply selected suggestion |
+| Esc | Abort current turn / close menu / clear line |
+| Ctrl+C | Abort turn or clear line; twice on empty line exits |
+| Ctrl+D | Exit on empty line |
+| Ctrl+A / E | Cursor to line start / end |
+| Ctrl+U / K | Delete to line start / end |
+| Ctrl+W | Delete previous word |
 
 ## Tools (8)
 
