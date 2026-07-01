@@ -252,8 +252,9 @@ pnpm -r build          # Compile
 
 - **v0.1** — Single agent loop + 5 tools + 3-tier permission + in-memory sessions
 - **v0.2** — Ink TUI + persistent sessions + history compression + Memory + Plan mode + 3 new tools + slash commands
-- **v0.3** (current) — Skills system + Hooks + MCP client + Tool parallel execution
-- **v0.4+** — Sub-agent parallelism + Plugin system
+- **v0.3** (current) — Skills system + Hooks + MCP client + Tool parallel execution + slash-command parity with Claude Code
+- **v0.4** — Harness hardening (evidence-gathering prompt, verify-before-done, built-in process skills, sensitive-path plan gate). See [docs/TODO.md](docs/TODO.md).
+- **v0.5+** — Sub-agent parallelism + Plugin system + model routing
 
 ## License
 
