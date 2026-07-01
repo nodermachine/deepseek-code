@@ -8,6 +8,8 @@
 ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 ![pnpm](https://img.shields.io/badge/pnpm-9-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.4-3178C6)
+[![中文文档](https://img.shields.io/badge/文档-中文-red?style=flat)](README.zh-CN.md)
 
 </div>
 
@@ -19,13 +21,34 @@
 
 Built as a monorepo with three decoupled packages, it features a permission system, persistent sessions, history compression, planning mode, and an extensible skill/hook architecture.
 
+---
+
+## Why deepseek-code?
+
+| | deepseek-code | Claude Code |
+|---|---|---|
+| 💰 **Cost** | ~1/30 the API cost via DeepSeek | Anthropic API pricing |
+| 🔓 **Open Source** | ✅ MIT License, fully open | ❌ Proprietary |
+| 🔧 **Model Choice** | DeepSeek + any OpenAI-compatible API | Claude only |
+| 🧠 **Reasoning Model** | Native `deepseek-reasoner` support | N/A |
+| 🏗️ **Architecture** | Modular monorepo (core/tools/cli) | Monolithic |
+| 🛡️ **Permission** | 3-tier + prefix memory + blacklist | Binary allow/deny |
+| 🔌 **Extensibility** | Skills + Hooks + MCP client | Limited plugins |
+| 📦 **Session** | Disk-persisted, resume, compress | In-memory only |
+| 🌐 **Web Fetch** | Built-in HTML→text tool | ❌ Not available |
+
+> **Bottom line**: `deepseek-code` is the open-source, privacy-first coding agent that costs **~97% less** than Claude Code, supports **any OpenAI-compatible API** (not just DeepSeek), is **fully customizable** with skills/hooks/MCP, and runs entirely on **your machine with your API key**. No lock-in, no surveillance, no monthly subscription.
+
+---
+
 ## Features
 
 - 🤖 **Autonomous Agent Loop** — Automatic tool orchestration with multi-step reasoning
-- 🔧 **8 Built-in Tools** — Read, Grep, Glob, Edit, Write, Bash, WebFetch, TodoWrite
+- 🔧 **9 Built-in Tools** — Read, Grep, Glob, Edit, **MultiEdit**, Write, Bash, WebFetch, TodoWrite
 - 🛡️ **3-Tier Permission System** — Session-level memory, project-level rules, user-level config
 - 💬 **Interactive REPL** — Rich TUI with Ink, slash commands, and Tab completion
 - 📝 **Persistent Sessions** — Disk-backed session storage with `--resume` support
+- ⚡ **Parallel Tool Execution** — Run compatible tools in parallel for faster results
 - 📦 **History Compression** — Automatic context window management
 - 📋 **Plan Mode** — Generate plans first, confirm, then execute
 - 🧠 **Memory System** — `DEEPSEEK.md` rules file (user-level & project-level)
@@ -159,7 +182,7 @@ Please open a PR against $1. Extra: $ARGUMENTS
 | Ctrl+U / K | Delete to line start / end |
 | Ctrl+W | Delete previous word |
 
-## Tools (8)
+## Tools (9)
 
 | Tool | Description | Permission |
 |------|-------------|-----------|
@@ -167,6 +190,7 @@ Please open a PR against $1. Extra: $ARGUMENTS
 | **Grep** | ripgrep wrapper (regex, glob, context) | Auto-allow |
 | **Glob** | Pattern-based file path matching | Auto-allow |
 | **Edit** | Exact string replacement (requires prior Read) | Ask first |
+| **MultiEdit** | Batch multi-file atomic replacement | Ask first |
 | **Write** | Full file write | Ask first |
 | **Bash** | Execute shell commands (30s timeout) | Ask by prefix |
 | **WebFetch** | Fetch web content (HTML → plain text) | Ask first |
@@ -222,7 +246,7 @@ Example:
 ```
 packages/
 ├── core/      # Core runtime (Agent Loop, Provider, Permission, Session, Memory, Compact, Skills, Hooks, MCP)
-├── tools/     # 8 built-in tools (decoupled from core)
+├── tools/     # 9 built-in tools (decoupled from core)
 └── cli/       # CLI entry point (REPL, rendering, Ink TUI, permission prompts)
 ```
 
@@ -245,7 +269,7 @@ pnpm -r build          # Compile
 | Package | Description |
 |---------|-------------|
 | `@deepseek-code/core` | Core runtime: agent loop, provider, permission engine, session store, memory loader, skill system, hooks, MCP client |
-| `@deepseek-code/tools` | 8 built-in tools: Read, Grep, Glob, Edit, Write, Bash, WebFetch, TodoWrite |
+| `@deepseek-code/tools` | 9 built-in tools: Read, Grep, Glob, Edit, MultiEdit, Write, Bash, WebFetch, TodoWrite |
 | `deepseek-code` (CLI) | Entry point: commander CLI, REPL, Ink TUI, renderers |
 
 ## Roadmap

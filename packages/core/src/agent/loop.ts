@@ -16,6 +16,8 @@ import type { SkillRegistry } from '../skills/registry.js';
 import type { Skill } from '../skills/types.js';
 import type { HookManager } from '../hooks/manager.js';
 import { getModelCapability } from '../provider/model-capabilities.js';
+import { truncateToolOutput } from './compact.js';
+import { LOOP_BREAK_SOFT, LOOP_BREAK_HARD } from '../prompts.js';
 
 /** 用户对权限询问的应答结果 */
 export interface AskPermissionResult { decision: 'allow' | 'deny'; remember: boolean }
@@ -167,6 +169,24 @@ export async function* runAgentLoop(opts: RunAgentLoopOpts): AsyncGenerator<Agen
     if (!supportsTools || finishReason === 'stop' || pendingCalls.size === 0) {
       // thinking 内容不存入 session（自然结束时无需回传）
       if (assistantContent) session.messages.push({ role: 'assistant', content: assistantContent });
+
+      // 模型驱动 skill 激活：检测 [activate-skill: xxx] 标记
+      const activateMatch = assistantContent.match(/\[activate-skill:\s*([^\]]+)\]/i);
+      if (activateMatch && opts.skillRegistry) {
+        const skillName = activateMatch[1].trim();
+        const allSkills = opts.skillRegistry.list();
+        const skill = allSkills.find(s => s.name === skillName);
+        if (skill) {
+          logger.info('model activated skill', { skill: skillName });
+          session.messages.push({
+            role: 'user',
+            content: `[Skill: ${skill.name}] 已激活。请按照以下技能内容指导你的后续行动：\n\n${skill.content}`,
+          });
+          yield { type: 'step_done', step };
+          continue; // 继续循环，让模型读取 skill 内容后重新响应
+        }
+      }
+
       yield { type: 'step_done', step };
       // Hook: onDone
       if (hooks?.has('onDone')) {
@@ -266,9 +286,11 @@ export async function* runAgentLoop(opts: RunAgentLoopOpts): AsyncGenerator<Agen
 
       const results = await Promise.all(execPromises);
 
-      // 按原始顺序写入 session 并 yield 事件
+      // 按原始顺序写入 session 并 yield 事件（超长工具输出自动截尾）
       for (const { id, name, result } of results) {
-        session.messages.push({ role: 'tool', content: JSON.stringify(result), tool_call_id: id, name });
+        const content = JSON.stringify(result);
+        const truncated = truncateToolOutput(content);
+        session.messages.push({ role: 'tool', content: truncated, tool_call_id: id, name });
         yield { type: 'tool_call_result', id, result };
       }
     }
@@ -285,9 +307,7 @@ export async function* runAgentLoop(opts: RunAgentLoopOpts): AsyncGenerator<Agen
         if (uniqueNames.size <= 2) {
           loopBreakCount++;
           logger.warn('detected tool call loop', { tools: [...uniqueNames], count: loopBreakCount });
-          const hint = loopBreakCount > 2
-            ? '[System] Detected repeated tool calls. If the task cannot be completed with available tools, explain the limitation to the user and stop.'
-            : '[System] Detected repeated tool calls. Please try a different approach or report progress to the user.';
+          const hint = loopBreakCount > 2 ? LOOP_BREAK_HARD : LOOP_BREAK_SOFT;
           session.messages.push({ role: 'user', content: hint });
         }
       }

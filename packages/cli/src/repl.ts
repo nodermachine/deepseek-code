@@ -106,7 +106,20 @@ export async function startRepl(deps: ReplDeps): Promise<number> {
     }
 
     if (action.kind === 'unknown') {
-      // legacy /skills/<name>
+      // 尝试按名称直接匹配 skill（任何 trigger 类型，不仅限 command）
+      // 这样 /p9 和 /skills/p9 都能工作
+      if (deps.skillRegistry) {
+        const skill = deps.skillRegistry.getByCommand(action.name)
+          ?? deps.skillRegistry.list().find((s) => s.name === action.name);
+        if (skill) {
+          const promptPart = raw.slice(action.name.length + 1).trim();
+          const enriched = `[Skill: ${skill.name}]\n${skill.content}\n\n---\n${promptPart || '请按以上技能指引执行'}`;
+          await runAgentTurn(enriched, { attachments });
+          return;
+        }
+      }
+
+      // legacy /skills/<name> 向后兼容
       const skillMatch = raw.match(/^\/skills\/([^\s]+)(?:\s+(.*))?$/);
       if (skillMatch && deps.skillRegistry) {
         const [, skillName, prompt] = skillMatch;
@@ -118,7 +131,9 @@ export async function startRepl(deps: ReplDeps): Promise<number> {
           return;
         }
       }
-      flashStatus(pc.red(`未知命令: /${action.name}`));
+
+      // 未找到：给出安装引导
+      flashStatus(pc.red(`未知命令: /${action.name}`) + pc.gray(` — 尝试 deepseek install ${action.name}`));
       return;
     }
 
@@ -161,7 +176,7 @@ export async function startRepl(deps: ReplDeps): Promise<number> {
       const r = appendMemory({ scope, text, cwd: deps.cwd });
       // rebuild system prompt for next turn
       const alwaysOn = deps.skillRegistry?.getAlwaysOn() ?? [];
-      const newSys = buildSystemPrompt({ cwd: deps.cwd, skills: alwaysOn, model: deps.getModel() });
+      const newSys = buildSystemPrompt({ cwd: deps.cwd, skills: alwaysOn, allSkills: deps.skillRegistry?.list(), model: deps.getModel() });
       const sysIdx = deps.session.messages.findIndex((m) => m.role === 'system');
       if (sysIdx >= 0) deps.session.messages[sysIdx].content = newSys;
       flashStatus(`✓ 已${r.created ? '创建' : '追加到'}${scope === 'project' ? '项目' : '用户'}级 memory`);

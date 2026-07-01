@@ -8,6 +8,8 @@
 ![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)
 ![pnpm](https://img.shields.io/badge/pnpm-9-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.4-3178C6)
+[![English](https://img.shields.io/badge/Docs-English-blue?style=flat)](README.md)
 
 </div>
 
@@ -19,13 +21,34 @@
 
 项目采用 monorepo 结构，包含三个解耦的包，具备权限控制系统、持久化会话、历史压缩、规划模式以及可扩展的 Skill/Hook 架构。
 
+---
+
+## 为什么选择 deepseek-code？
+
+| | deepseek-code | Claude Code |
+|---|---|---|
+| 💰 **成本** | DeepSeek API 仅约 Claude 的 **1/30** | Anthropic API 高价 |
+| 🔓 **开源** | ✅ MIT 协议，完全开源 | ❌ 闭源 |
+| 🔧 **模型选择** | DeepSeek + 任意兼容 OpenAI 的 API | 仅限 Claude |
+| 🧠 **推理模型** | 原生支持 `deepseek-reasoner` | 不支持 |
+| 🏗️ **架构** | 模块化 monorepo（core/tools/cli） | 单体架构 |
+| 🛡️ **权限** | 三层体系 + 前缀记忆 + 黑名单 | 二元允许/拒绝 |
+| 🔌 **可扩展** | Skills + Hooks + MCP 客户端 | 有限的插件 |
+| 📦 **会话** | 磁盘持久化，支持恢复和压缩 | 仅内存 |
+| 🌐 **网页抓取** | 内置 HTML→文本工具 | ❌ 不支持 |
+
+> **一句话**：如果你想要一个开源、低成本、隐私优先的编码 Agent，支持 DeepSeek 和任意 OpenAI 兼容 API，完全可定制且尊重你的隐私 — `deepseek-code` 就是你的选择。
+
+---
+
 ## 功能特性
 
 - 🤖 **自主 Agent 循环** — 自动编排工具调用，支持多步推理
-- 🔧 **8 个内置工具** — Read、Grep、Glob、Edit、Write、Bash、WebFetch、TodoWrite
+- 🔧 **9 个内置工具** — Read、Grep、Glob、Edit、**MultiEdit**、Write、Bash、WebFetch、TodoWrite
 - 🛡️ **三层权限系统** — 会话级记忆、项目级规则、用户级配置
 - 💬 **交互式 REPL** — 基于 Ink 的丰富 TUI，支持斜杠命令和 Tab 补全
 - 📝 **持久化会话** — 磁盘存储，支持 `--resume` 恢复对话
+- ⚡ **并行工具执行** — 兼容工具可并行运行，大幅提升效率
 - 📦 **历史压缩** — 自动管理上下文窗口，防止 token 溢出
 - 📋 **规划模式** — 先生成计划，确认后再执行
 - 🧠 **记忆系统** — `DEEPSEEK.md` 规则文件（支持用户级和项目级）
@@ -117,7 +140,7 @@ deepseek sessions rm <id>       # 删除会话
 | `/compact` | 手动触发历史压缩 |
 | `/quit` | 退出 REPL |
 
-## 支持的工具（8 个）
+## 支持的工具（9 个）
 
 | 工具 | 说明 | 权限 |
 |------|------|------|
@@ -125,6 +148,7 @@ deepseek sessions rm <id>       # 删除会话
 | **Grep** | ripgrep 包装（正则/glob/上下文） | 自动放行 |
 | **Glob** | 按模式匹配文件路径 | 自动放行 |
 | **Edit** | 精确字符串替换（需先 Read） | 首次询问 |
+| **MultiEdit** | 批量多文件原子性替换 | 首次询问 |
 | **Write** | 整文件写入 | 首次询问 |
 | **Bash** | 执行 shell 命令（30s 超时） | 按命令前缀询问 |
 | **WebFetch** | 抓取网页内容（HTML→纯文本） | 首次询问 |
@@ -180,7 +204,7 @@ deepseek sessions rm <id>       # 删除会话
 ```
 packages/
 ├── core/      # 核心运行时（Agent Loop、Provider、权限、Session、Memory、Compact、Skills、Hooks、MCP）
-├── tools/     # 8 个内置工具（与 core 解耦）
+├── tools/     # 9 个内置工具（与 core 解耦）
 └── cli/       # 命令行入口（REPL、渲染、Ink TUI、权限提示）
 ```
 
@@ -203,7 +227,7 @@ pnpm -r build          # 编译
 | 包名 | 说明 |
 |------|------|
 | `@deepseek-code/core` | 核心运行时：Agent 循环、Provider、权限引擎、会话存储、记忆加载、Skill 系统、Hooks、MCP 客户端 |
-| `@deepseek-code/tools` | 8 个内置工具：Read、Grep、Glob、Edit、Write、Bash、WebFetch、TodoWrite |
+| `@deepseek-code/tools` | 9 个内置工具：Read、Grep、Glob、Edit、MultiEdit、Write、Bash、WebFetch、TodoWrite |
 | `deepseek-code` (CLI) | 入口点：commander CLI、REPL、Ink TUI、渲染器 |
 
 ## 路线图

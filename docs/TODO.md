@@ -192,11 +192,69 @@ Type-check `config.json` on load. Right now malformed config silently falls thro
 
 ---
 
+## P5 — 对标 Claude Code 演进（v0.4 目标）
+
+### 23. Headless / CI 模式
+
+**Effort:** 1 day
+**Why:** `claude -p "fix the bug"` 是 CI/CD 集成的基础。当前单次模式会弹权限确认，无法 pipe 使用。
+
+- `deepseek --headless "prompt"` 或 `echo "prompt" | deepseek -p -`
+- headless 模式下: 权限按 `--trust` 级别自动决策、输出纯文本、exit code 语义化
+- `--trust none|tools|full`
+
+### 24. 上下文窗口智能管理
+
+**Effort:** 1 day
+**Why:** Claude Code 在接近上下文上限时自动截断旧消息，用户无感。当前仅 80% 时触发 compact，且需额外 API 调用。
+
+- 滑动窗口截断（不调模型，直接丢弃最旧 N 轮 + 插入截断标记）
+- 工具输出超长（>8KB）自动截尾，保留头尾各 4KB
+- 静默执行，不输出“正在压缩”提示
+
+### 25. Git 工作流集成
+
+**Effort:** 1.5 days
+**Why:** Claude Code 有 `/commit`、自动 commit 建议、PR 生成。开发者日常最高频需求。
+
+- `/commit` 命令: 基于 `git diff --staged` 生成 commit message，用户确认后执行
+- `/pr` 命令: 基于当前分支 vs main 的 diff，生成 PR title + body，调用 `gh pr create`
+- 自动提示: agent 执行结束后有文件变更时，状态栏闪现 "3 files changed — /commit?"
+
+### 26. Sub-agent 并行框架
+
+**Effort:** 2 days
+**Why:** Claude Code 能派生子 agent 做并行搜索/分析。处理复杂任务的核心能力差距。
+
+- 新工具 `Dispatch`: agent 可派生 1-3 个轻量子任务
+- 子任务共享 readFiles 但独立 messages，使用 flash 模型
+- 子任务只读（禁止 Edit/Write/Bash），防并发写冲突
+
+### 27. REPL 实时成本显示
+
+**Effort:** 0.5 day
+**Why:** 用户无成本感知。每轮结束后状态栏显示 `tokens: 2,431 | $0.003 | cache: 78%`。
+
+### 28. 长任务完成通知
+
+**Effort:** 0.5 day
+**Why:** Agent 执行超过 30s 时，完成时触发系统通知 + BEL 字符。可通过 `config.notifications = false` 关闭。
+
+### 29. MultiEdit 工具（多文件批量编辑）
+
+**Effort:** 1 day
+**Why:** 当前 Edit 只能单文件单次。新工具接受 `{ edits: [{file, old, new}] }` 数组，原子性执行，失败回滚。
+
+---
+
 ## Non-goals / rejected
 
 - **Rewriting the agent loop to be "smarter"** — the bottleneck isn't the loop, it's the prompt + skills + verification rails around it.
 - **Automatic model upgrade if Flash "seems confused"** — too heuristic, would misfire. Ship item 6 (deterministic routing) instead.
 - **Enforcing plan mode globally** — kills the "one-liner tweak" flow that's a huge chunk of daily use. Sensitive-path gating (item 4) is the sweet spot.
+- **图像/截图支持** — DeepSeek V4 API 当前不支持 vision，等模型侧就绪再接入。
+- **文件监视/热重载** — ROI 不高，用户可通过 Bash 工具实现。
+- **语义代码搜索** — ripgrep 已够用，向量索引引入额外依赖复杂度过高。
 
 ---
 

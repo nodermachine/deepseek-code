@@ -6,6 +6,7 @@
 import type { Message } from '../types.js';
 import type { Provider } from '../provider/types.js';
 import { getModelContextSize } from '../provider/model-capabilities.js';
+import { COMPACT_SUMMARIZE_SYSTEM, compactFallback, compactSummaryMarker, truncateMarker } from '../prompts.js';
 
 /** Compact 配置 */
 export interface CompactOpts {
@@ -130,10 +131,7 @@ export async function compactMessages(
   // 请模型生成摘要
   const conversationText = buildSummarizePrompt(toCompress);
   const summarizeMessages: Message[] = [
-    {
-      role: 'system',
-      content: '你是一个对话摘要助手。请将以下对话历史压缩为一段简洁的摘要，保留关键操作和结果。用中文输出，不超过 500 字。',
-    },
+    { role: 'system', content: COMPACT_SUMMARIZE_SYSTEM },
     { role: 'user', content: conversationText },
   ];
 
@@ -148,13 +146,13 @@ export async function compactMessages(
     }
   } catch {
     // 摘要生成失败时，使用简单截断式摘要
-    summary = `[历史摘要] 之前的对话包含 ${toCompress.length} 条消息，涉及文件读写和命令执行。`;
+    summary = compactFallback(toCompress.length);
   }
 
   // 构建压缩后的 messages：system + 摘要消息 + 保留的最近轮次
   const compactedMessages: Message[] = [
     ...toKeep.filter(m => m.role === 'system'),
-    { role: 'system', content: `[历史摘要]\n${summary}` },
+    { role: 'system', content: compactSummaryMarker(summary) },
     ...toKeep.filter(m => m.role !== 'system'),
   ];
 
@@ -163,4 +161,31 @@ export async function compactMessages(
     summary,
     removedCount: toCompress.length,
   };
+}
+
+/**
+ * 轻量截断：不调模型，直接丢弃最旧 N 轮 + 插入截断标记
+ * 用于快速释放上下文空间，无额外 API 调用成本
+ */
+export function truncateMessages(messages: Message[], opts: CompactOpts = {}): {
+  messages: Message[];
+  removedCount: number;
+} {
+  const { toCompress, toKeep } = splitForCompact(messages, opts);
+  if (toCompress.length === 0) return { messages, removedCount: 0 };
+
+  const truncatedMessages: Message[] = [
+    ...toKeep.filter(m => m.role === 'system'),
+    { role: 'system', content: truncateMarker(toCompress.length) },
+    ...toKeep.filter(m => m.role !== 'system'),
+  ];
+
+  return { messages: truncatedMessages, removedCount: toCompress.length };
+}
+
+/** 工具输出截尾：超过 maxBytes 时保留头尾各半 */
+export function truncateToolOutput(output: string, maxBytes = 8192): string {
+  if (output.length <= maxBytes) return output;
+  const half = Math.floor(maxBytes / 2);
+  return output.slice(0, half) + '\n\n... [已截断 ' + (output.length - maxBytes).toLocaleString() + ' 字符] ...\n\n' + output.slice(-half);
 }

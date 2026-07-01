@@ -5,7 +5,7 @@
  */
 import pc from 'picocolors';
 import type { Session, SessionStore, SkillRegistry, Config, Provider } from '@deepseek-code/core';
-import { CommandRegistry, compactMessages, lintSkills, VERSION } from '@deepseek-code/core';
+import { CommandRegistry, compactMessages, lintSkills, VERSION, commitMsgPrompt, prPrompt } from '@deepseek-code/core';
 
 export interface BuiltinCtx {
   session: Session;
@@ -31,6 +31,8 @@ const BUILTINS: Array<{ name: string; description: string; argumentHint?: string
   { name: 'clear', description: '清空当前会话历史' },
   { name: 'sessions', description: '列出历史会话' },
   { name: 'compact', description: '手动触发历史压缩' },
+  { name: 'commit', description: '基于 git diff 生成 commit message 并提交' },
+  { name: 'pr', description: '生成 PR 并调用 gh pr create' },
   { name: 'memory', description: '打开 DEEPSEEK.md 编辑', argumentHint: '[user]' },
   { name: 'init', description: '初始化项目配置（DEEPSEEK.md + commands 目录）' },
   { name: 'doctor', description: '自诊断：检查配置、工具、技能健全性' },
@@ -131,6 +133,93 @@ export async function runBuiltin(
       });
       ctx.session.messages = result.messages;
       w(pc.gray(`已压缩 ${result.removedCount} 条消息（${before} → ${ctx.session.messages.length}）\n`));
+      return;
+    }
+    case 'commit': {
+      const { execSync } = await import('node:child_process');
+      const readline = await import('node:readline');
+      try {
+        const diff = execSync('git diff --staged --stat', { cwd: ctx.cwd, encoding: 'utf8' }).trim();
+        if (!diff) {
+          // 没有 staged 文件，尝试 stage 所有变更
+          const unstaged = execSync('git diff --stat', { cwd: ctx.cwd, encoding: 'utf8' }).trim();
+          if (!unstaged) { w(pc.gray('无文件变更\n')); return; }
+          w(pc.gray(`发现未暂存变更：\n${unstaged}\n`));
+          const ask = (q: string): Promise<string> => {
+            const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+            return new Promise(res => rl.question(q, a => { rl.close(); res(a.trim()); }));
+          };
+          const ans = await ask(pc.yellow('Stage all and commit? [y/N] '));
+          if (ans.toLowerCase() !== 'y') { w(pc.gray('已取消\n')); return; }
+          execSync('git add -A', { cwd: ctx.cwd });
+        }
+        const fullDiff = execSync('git diff --staged', { cwd: ctx.cwd, encoding: 'utf8' });
+        const shortDiff = fullDiff.slice(0, 3000); // 截断以节省 token
+        // 用 agent 生成 commit message
+        const msg = commitMsgPrompt(shortDiff);
+        w(pc.gray('正在生成 commit message...\n'));
+        let commitMsg = '';
+        if (ctx.provider) {
+          const ctrl = new AbortController();
+          for await (const ev of ctx.provider.stream({ model: ctx.getModel(), messages: [{ role: 'user', content: msg }] }, ctrl.signal)) {
+            if (ev.type === 'text_delta') commitMsg += ev.text;
+          }
+        }
+        commitMsg = commitMsg.trim();
+        if (!commitMsg) { w(pc.red('生成失败\n')); return; }
+        w(`\n${pc.green(commitMsg)}\n\n`);
+        const confirm = (q: string): Promise<string> => {
+          const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+          return new Promise(res => rl.question(q, a => { rl.close(); res(a.trim()); }));
+        };
+        const ans2 = await confirm(pc.yellow('确认提交？[y/e(dit)/N] '));
+        if (ans2.toLowerCase() === 'y') {
+          execSync(`git commit -m ${JSON.stringify(commitMsg)}`, { cwd: ctx.cwd, stdio: 'inherit' });
+          ctx.flashStatus('✓ 已提交');
+        } else if (ans2.toLowerCase() === 'e') {
+          execSync('git commit', { cwd: ctx.cwd, stdio: 'inherit' });
+        } else {
+          w(pc.gray('已取消\n'));
+        }
+      } catch (e: any) {
+        w(pc.red(`git 操作失败: ${e.message}\n`));
+      }
+      return;
+    }
+    case 'pr': {
+      const { execSync } = await import('node:child_process');
+      try {
+        const branch = execSync('git branch --show-current', { cwd: ctx.cwd, encoding: 'utf8' }).trim();
+        if (branch === 'main' || branch === 'master') {
+          w(pc.red('当前在主分支上，请先切到功能分支\n'));
+          return;
+        }
+        const diff = execSync(`git log main..${branch} --oneline`, { cwd: ctx.cwd, encoding: 'utf8' }).trim();
+        if (!diff) { w(pc.gray('当前分支无新提交\n')); return; }
+        w(pc.gray(`分支 ${branch} 相对 main 的提交：\n${diff}\n\n`));
+        w(pc.gray('正在生成 PR 标题和描述...\n'));
+        let prContent = '';
+        if (ctx.provider) {
+          const ctrl = new AbortController();
+          const prompt = prPrompt(diff);
+          for await (const ev of ctx.provider.stream({ model: ctx.getModel(), messages: [{ role: 'user', content: prompt }] }, ctrl.signal)) {
+            if (ev.type === 'text_delta') prContent += ev.text;
+          }
+        }
+        prContent = prContent.trim();
+        const [title, ...bodyLines] = prContent.split('\n');
+        const body = bodyLines.join('\n').trim();
+        w(`\n${pc.green(title)}\n${pc.dim(body.slice(0, 200))}\n\n`);
+        w(pc.yellow('执行: gh pr create \n'));
+        try {
+          execSync(`gh pr create --title ${JSON.stringify(title)} --body ${JSON.stringify(body)}`, { cwd: ctx.cwd, stdio: 'inherit' });
+          ctx.flashStatus('✓ PR 已创建');
+        } catch {
+          w(pc.red('gh pr create 失败，请确认 gh CLI 已安装并登录\n'));
+        }
+      } catch (e: any) {
+        w(pc.red(`操作失败: ${e.message}\n`));
+      }
       return;
     }
     case 'skills': {

@@ -38,3 +38,4 @@ export * from './commands/loader.js';
 export * from './commands/registry.js';
 export * from './memory/appender.js';
 export * from './files/index.js';
+export * from './prompts.js';

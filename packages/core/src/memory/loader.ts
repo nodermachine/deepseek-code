@@ -9,6 +9,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Skill } from '../skills/types.js';
 import { getModelCapability } from '../provider/model-capabilities.js';
+import { buildBasePrompt, MODEL_HINT_NO_TOOLS, MODEL_HINT_THINKING, buildSkillCatalog } from '../prompts.js';
 
 export interface LoadMemoryOpts {
   /** 当前工作目录 */
@@ -47,6 +48,8 @@ export function loadMemory(opts: LoadMemoryOpts): string | null {
 export interface BuildSystemPromptOpts extends LoadMemoryOpts {
   /** always-on skills 内容（阶段三） */
   skills?: Skill[];
+  /** 所有已加载 skills（用于生成 skill catalog，让模型感知可用技能） */
+  allSkills?: Skill[];
   /** 当前模型名（用于模型特定指令） */
   model?: string;
 }
@@ -61,32 +64,12 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
   // 模型特定指令
   let modelHint = '';
   if (cap && !cap.toolCalls) {
-    modelHint = `\n\n注意：当前模型不支持工具调用。请直接给出完整的代码和修改方案，用户会手动执行。`;
+    modelHint = MODEL_HINT_NO_TOOLS;
   } else if (cap && cap.thinking) {
-    modelHint = `\n\n你拥有深度思考能力，请先分析再行动。对于复杂任务，先输出你的推理过程，再调用工具执行。`;
+    modelHint = MODEL_HINT_THINKING;
   }
 
-  const base = `你是 deepseek-code，一个强大的命令行编码助手。你可以使用工具来读取、编辑、搜索文件以及执行 shell 命令。
-
-当前工作目录：${opts.cwd}
-
-工具使用规则：
-- 使用 Read 工具前需要提供绝对路径
-- 使用 Edit 工具前必须先 Read 该文件
-- Bash 工具的命令在当前工作目录执行
-- 如果不确定文件路径，先用 Grep 或 Bash(find/ls) 搜索
-- 优先使用小步骤，避免一次性修改过多文件
-
-诊断协议（DO NOT SKIP）：
-- 发现"文件 A 格式跟解析器/消费方 B 期望不符"这类不匹配时，先 grep ≥3 个同类文件（sibling）确认哪一方是常态，再决定改哪边。不要看 1 个样本就下"文件错了"或"代码错了"的定性结论。
-- 看到数量/列表异常（比如"我明明只装了 6 个 skill 但列出来 62 个"），先用 ls / find / git ls-files 数一遍真值再解释原因。
-- 只有当你有直接证据（工具输出）支持某个结论时才用"是"这个字。工具调用少于 3 次之前，用"看起来是"、"可能是"、"待验证"这类措辞。
-- 保留 ##、🔴、✅、"核心问题" 这类高置信排版，只用在**验证完之后**的总结段落里。初次分析段禁用。
-
-完成前的验证（VERIFY-BEFORE-DONE）：
-- 声称"修复完成"、"测试通过"、"验证无破坏"之前，必须重新运行触发原问题的场景/命令，把实际输出贴出来。不要复述、不要意译、不要省略。
-- 单元测试通过 ≠ 功能修复。如果原问题是在某个 CLI 命令或 REPL 交互里暴露的，就必须重跑那个命令，看到期望结果，才能说 done。
-- 如果无法自动验证（需要交互式 UI 等），显式说明"此项需人工验证：请运行 X，看到 Y 则通过"，不要装作已经验证过。${modelHint}`;
+  const base = buildBasePrompt(opts.cwd) + modelHint;
 
   const parts = [base];
 
@@ -103,6 +86,12 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
       .map(s => `[Skill: ${s.name}]\n${s.content}`)
       .join('\n\n');
     parts.push(skillsContent);
+  }
+
+  // Skill catalog：列出所有非 always-on 技能的 name+description，让模型可以主动激活
+  if (opts.allSkills && opts.allSkills.length > 0) {
+    const catalog = buildSkillCatalog(opts.allSkills);
+    if (catalog) parts.push(catalog);
   }
 
   return parts.join('\n\n---\n\n');
