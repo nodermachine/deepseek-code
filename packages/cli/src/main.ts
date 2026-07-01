@@ -6,6 +6,7 @@
 import { Command } from 'commander';
 import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
+import pc from 'picocolors';
 import {
   loadConfig, getConfigSources, JsonlLogger, NullLogger,
   ToolRegistry, PermissionEngine, DiskSessionStore,
@@ -21,6 +22,7 @@ import { makeAskPermission } from './permission-prompt.js';
 import { runLogin } from './login.js';
 import { startRepl } from './repl.js';
 import { handleInstall, handleUninstall } from './install.js';
+import { handleSyncSkills } from './sync-skills.js';
 import { createDefaultHooks } from './hooks/defaults.js';
 
 export async function main(argv: string[]): Promise<number> {
@@ -55,6 +57,11 @@ export async function main(argv: string[]): Promise<number> {
   // uninstall 子命令
   if (argv.includes('uninstall')) {
     return await handleUninstall(argv);
+  }
+
+  // sync-skills 子命令：同步 ~/.claude/skills/ 到 ~/.deepseek-code/skills/
+  if (argv.includes('sync-skills')) {
+    return handleSyncSkills(argv);
   }
 
   program.parse(argv);
@@ -129,30 +136,40 @@ export async function main(argv: string[]): Promise<number> {
   // 构建 system prompt（含 DEEPSEEK.md + always-on skills）
   const systemPrompt = buildSystemPrompt({ cwd, skills: alwaysOnSkills, model });
 
-  const runTurn = async (input: string, _sess = session, signal?: AbortSignal): Promise<number> => {
+  const runTurn = async (
+    input: string,
+    _sess = session,
+    signal?: AbortSignal,
+    turnOpts?: { modelOverride?: string; allowedTools?: string[]; attachments?: string[]; usePlan?: boolean; events?: (e: AsyncIterable<any>) => void },
+  ): Promise<number> => {
     const ctl = signal ? null : new AbortController();
     const sig = signal ?? ctl!.signal;
+    const runModel = turnOpts?.modelOverride ?? currentModel;
 
     // Compact：如果历史过长则压缩（使用 compactModel 或 flash 节省成本）
-    if (needsCompact(session.messages, { model: currentModel })) {
+    if (needsCompact(session.messages, { model: runModel })) {
       process.stderr.write('正在压缩历史对话...\n');
       const result = await compactMessages(session.messages, provider, sig, {
-        model: currentModel,
+        model: runModel,
         compactModel: config.compactModel,
       });
       session.messages = result.messages;
       process.stderr.write(`已压缩 ${result.removedCount} 条消息\n`);
     }
 
-    // 判断是否使用 Plan mode
-    const usePlan = opts.plan || input.startsWith('/plan ');
-    const actualInput = input.startsWith('/plan ') ? input.slice(6) : input;
+    // 拼 attachments 提示
+    const attachmentNote = turnOpts?.attachments && turnOpts.attachments.length > 0
+      ? `[attached files]\n${turnOpts.attachments.map(a => '- ' + a).join('\n')}\n\n`
+      : '';
+    const actualInput = attachmentNote + input;
+
+    const usePlan = opts.plan || turnOpts?.usePlan === true;
 
     let events: AsyncIterable<any>;
     if (usePlan) {
       events = runPlanMode({
         provider, registry, permission, session,
-        userInput: actualInput, model: currentModel, maxSteps: config.maxSteps,
+        userInput: actualInput, model: runModel, maxSteps: config.maxSteps,
         signal: sig, logger, askPermission: ask,
         systemPrompt,
         planExecuteModel: config.planExecuteModel,
@@ -170,13 +187,39 @@ export async function main(argv: string[]): Promise<number> {
     } else {
       events = runAgentLoop({
         provider, registry, permission, session,
-        userInput: actualInput, model: currentModel, maxSteps: config.maxSteps,
+        userInput: actualInput, model: runModel, maxSteps: config.maxSteps,
         signal: sig, logger, askPermission: ask,
         systemPrompt, skillRegistry, hooks: hookManager,
       });
     }
 
-    // 选择渲染方式：TTY + 未禁用 TUI 时用 Ink，否则用纯文本
+    // REPL 模式下：把 events 交给持久 Ink 实例，本函数只等 events 消费完
+    if (turnOpts?.events) {
+      // events 需要被两处消费（Ink UI + 本函数 for-await），复制流
+      const [uiEvents, drainEvents] = teeAsync(events);
+      turnOpts.events(uiEvents);
+      let exitCode = 0;
+      for await (const ev of drainEvents) {
+        if (ev.type === 'done') {
+          if (ev.reason === 'fatal' || ev.reason === 'max_steps') exitCode = 1;
+          if (ev.reason === 'abort') exitCode = 130;
+          break;
+        }
+      }
+      // 中断清理
+      if (sig.aborted && session.messages.length > 0) {
+        const last = session.messages[session.messages.length - 1];
+        if (last.role === 'assistant' && (!last.content || last.content.length === 0)) {
+          session.messages.pop();
+          const prev = session.messages[session.messages.length - 1];
+          if (prev && prev.role === 'user') session.messages.pop();
+        }
+      }
+      sessionStore.save(session);
+      return exitCode;
+    }
+
+    // 非 REPL 模式：走原有渲染
     const useTui = opts.tui && process.stdout.isTTY;
     const { exitCode } = useTui
       ? await renderWithInk(events)
@@ -217,10 +260,49 @@ export async function main(argv: string[]): Promise<number> {
       skillRegistry,
       config,
       configSources,
+      provider,
+      cwd,
     });
   }
   const promptText = args.join(' ');
+  // 单次任务模式：显示用户输入
+  process.stdout.write(pc.green('┃ You: ') + pc.white(promptText) + '\n\n');
   return runTurn(promptText);
+}
+
+/** 把一个 AsyncIterable 复制成两个独立消费的流（简单缓冲实现） */
+function teeAsync<T>(source: AsyncIterable<T>): [AsyncIterable<T>, AsyncIterable<T>] {
+  const bufA: T[] = [];
+  const bufB: T[] = [];
+  let done = false;
+  const waitersA: Array<() => void> = [];
+  const waitersB: Array<() => void> = [];
+  const notify = (arr: Array<() => void>) => { while (arr.length) arr.shift()!(); };
+
+  (async () => {
+    for await (const v of source) {
+      bufA.push(v); bufB.push(v);
+      notify(waitersA); notify(waitersB);
+    }
+    done = true;
+    notify(waitersA); notify(waitersB);
+  })().catch(() => { done = true; notify(waitersA); notify(waitersB); });
+
+  const make = (buf: T[], waiters: Array<() => void>): AsyncIterable<T> => ({
+    [Symbol.asyncIterator]() {
+      return {
+        async next(): Promise<IteratorResult<T>> {
+          while (buf.length === 0 && !done) {
+            await new Promise<void>((r) => waiters.push(r));
+          }
+          if (buf.length > 0) return { value: buf.shift()!, done: false };
+          return { value: undefined as any, done: true };
+        },
+      };
+    },
+  });
+
+  return [make(bufA, waitersA), make(bufB, waitersB)];
 }
 
 /**

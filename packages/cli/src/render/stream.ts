@@ -5,6 +5,7 @@
  * 设计原则：
  * - 所有输出只追加，不擦除（不使用 ANSI 光标上移/清行转义码）
  * - 避免破坏终端滚动缓冲区（scrollback buffer），确保用户可以向上滚动查看输出
+ * - 消息之间用浅色分隔线，清晰区分不同轮次的对话
  */
 import pc from 'picocolors';
 import { Marked } from 'marked';
@@ -24,6 +25,15 @@ function renderMarkdown(md: string): string {
   }
 }
 
+/**
+ * 渲染一条浅色分隔线，用于消息之间视觉分离
+ * 终端宽度通过 process.stdout.columns 获取（默认 80）
+ */
+function renderSeparator(out: NodeJS.WritableStream): void {
+  const width = (process.stdout.columns || 80);
+  out.write(pc.dim('─'.repeat(width)) + '\n');
+}
+
 export async function renderAgentStream(
   events: AsyncIterable<AgentEvent>,
   out: NodeJS.WritableStream,
@@ -31,6 +41,7 @@ export async function renderAgentStream(
   let exitCode = 0;
   let textBuffer = '';   // 累积 assistant 文本，结束后统一渲染
   let inThinking = false;
+  let hasOutput = false; // 是否有过输出（用于决定是否显示分隔线）
 
   for await (const ev of events) {
     if (ev.type === 'text_delta') {
@@ -47,7 +58,7 @@ export async function renderAgentStream(
         textBuffer = '';
       }
       if (!inThinking) {
-        out.write(pc.gray('[思考] '));
+        out.write(pc.gray('─ [思考中...] '));
         inThinking = true;
       }
       out.write(pc.gray(ev.text));
@@ -61,12 +72,14 @@ export async function renderAgentStream(
     }
     switch (ev.type) {
       case 'tool_call_start':
+        if (!hasOutput) { renderSeparator(out); hasOutput = true; }
         out.write(formatToolCallStart(ev.name, ev.input) + '\n');
         break;
       case 'tool_call_result':
         out.write(formatToolResult(ev.result) + '\n');
         break;
       case 'error':
+        if (!hasOutput) { renderSeparator(out); hasOutput = true; }
         out.write(pc.red(`! ${ev.error.code}: ${ev.error.userMessage}\n`));
         break;
       case 'done':
