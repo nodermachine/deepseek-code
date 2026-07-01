@@ -141,7 +141,7 @@ export async function compactMessages(
   const summaryModel = opts.compactModel ?? opts.model ?? 'deepseek-v4-flash';
   try {
     for await (const ev of provider.stream(
-      { model: summaryModel, messages: summarizeMessages },
+      { model: summaryModel, messages: summarizeMessages, thinking: { type: 'disabled' } },
       signal,
     )) {
       if (ev.type === 'text_delta') summary += ev.text;

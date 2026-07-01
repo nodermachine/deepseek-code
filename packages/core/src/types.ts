@@ -16,6 +16,11 @@ export interface Message {
   tool_call_id?: string;
   /** tool 消息中的工具名称 */
   name?: string;
+  /**
+   * DeepSeek V4 的推理内容（thinking）
+   * 当 assistant 消息包含 tool_calls 时，必须将 reasoning_content 回传给 API
+   */
+  reasoning_content?: string;
 }
 
 /** 单个工具调用描述 */

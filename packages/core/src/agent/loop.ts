@@ -3,7 +3,7 @@
  * 实现 "用户输入 → 模型推理 → 工具调用 → 循环" 的完整闭环
  * 阶段三新增：工具级并行执行（权限串行检查 → 执行并行）+ Skills 支持
  */
-import type { Provider } from '../provider/types.js';
+import type { Provider, ThinkingConfig } from '../provider/types.js';
 import type { ToolRegistry } from '../tools/registry.js';
 import type { PermissionEngine } from '../permission/engine.js';
 import type { Session } from '../session/types.js';
@@ -37,6 +37,10 @@ export interface RunAgentLoopOpts {
   skillRegistry?: SkillRegistry;
   /** Hooks 管理器（阶段三），事件钩子 */
   hooks?: HookManager;
+  /** thinking 模式控制（V4 支持 thinking + tool_calls 并行） */
+  thinking?: ThinkingConfig;
+  /** 思考强度控制 */
+  reasoning_effort?: 'low' | 'medium' | 'high';
 }
 
 /**
@@ -48,7 +52,7 @@ export interface RunAgentLoopOpts {
  * 4. 重复 2-3 直到：自然结束 / max_steps / abort / fatal
  */
 export async function* runAgentLoop(opts: RunAgentLoopOpts): AsyncGenerator<AgentEvent> {
-  const { provider, registry, permission, session, userInput, model, maxSteps, signal, logger, askPermission, systemPrompt, hooks } = opts;
+  const { provider, registry, permission, session, userInput, model, maxSteps, signal, logger, askPermission, systemPrompt, hooks, thinking, reasoning_effort } = opts;
   const capability = getModelCapability(model);
   const supportsTools = capability.toolCalls;
 
@@ -80,8 +84,9 @@ export async function* runAgentLoop(opts: RunAgentLoopOpts): AsyncGenerator<Agen
     const tools = supportsTools ? registry.toSchemas() : undefined;
     if (!supportsTools && step === 1) logger.warn(`模型 ${model} 不支持工具调用，已自动降级`);
 
-    // 累积本轮 assistant 的文本内容和工具调用
+    // 累积本轮 assistant 的文本内容、推理内容和工具调用
     let assistantContent = '';
+    let reasoningContent = ''; // V4 thinking 内容，有 tool_calls 时必须回传
     const pendingCalls = new Map<string, { name: string; args: unknown }>();
     let finishReason: 'stop' | 'tool_calls' | 'length' | null = null;
 
@@ -98,6 +103,8 @@ export async function* runAgentLoop(opts: RunAgentLoopOpts): AsyncGenerator<Agen
         tools,
         maxTokens: capability.maxOutput,
         parallelToolCalls: capability.parallelToolCalls && tools !== undefined ? true : undefined,
+        thinking: thinking ?? (capability.thinking ? { type: 'enabled' } : undefined),
+        reasoning_effort: reasoning_effort ?? capability.defaultReasoningEffort,
       }, signal)) {
         switch (ev.type) {
           case 'text_delta':
@@ -105,6 +112,7 @@ export async function* runAgentLoop(opts: RunAgentLoopOpts): AsyncGenerator<Agen
             yield { type: 'text_delta', text: ev.text };
             break;
           case 'thinking_delta':
+            reasoningContent += ev.text;
             yield { type: 'thinking_delta', text: ev.text };
             break;
           case 'tool_call_done':
@@ -157,7 +165,7 @@ export async function* runAgentLoop(opts: RunAgentLoopOpts): AsyncGenerator<Agen
     // --- 判断本轮结果 ---
     // 自然结束：模型没有发起工具调用
     if (!supportsTools || finishReason === 'stop' || pendingCalls.size === 0) {
-      // R1/thinking 模型：只保存文本内容，thinking 内容不存入 session（官方要求不可回传）
+      // thinking 内容不存入 session（自然结束时无需回传）
       if (assistantContent) session.messages.push({ role: 'assistant', content: assistantContent });
       yield { type: 'step_done', step };
       // Hook: onDone
@@ -180,7 +188,10 @@ export async function* runAgentLoop(opts: RunAgentLoopOpts): AsyncGenerator<Agen
     for (const [id, c] of pendingCalls) {
       toolCalls.push({ id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.args) } });
     }
-    session.messages.push({ role: 'assistant', content: assistantContent || null, tool_calls: toolCalls });
+    // V4: 有 tool_calls 时必须回传 reasoning_content（官方文档要求）
+    const assistantMsg: Message = { role: 'assistant', content: assistantContent || null, tool_calls: toolCalls };
+    if (reasoningContent) assistantMsg.reasoning_content = reasoningContent;
+    session.messages.push(assistantMsg);
 
     // === 阶段一：串行权限检查，收集已授权的待执行列表 ===
     const authorized: Array<{ id: string; name: string; input: unknown; tool: Tool }> = [];

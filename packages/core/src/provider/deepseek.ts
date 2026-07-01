@@ -68,6 +68,13 @@ export class DeepseekProvider implements Provider {
     }
     if (req.maxTokens !== undefined) payload.max_tokens = req.maxTokens;
     if (req.stop !== undefined) payload.stop = req.stop;
+    // V4 thinking 模式控制：thinking + tool_calls 可并行
+    if (req.thinking) {
+      payload.thinking = req.thinking;
+      // thinking 启用时不能设置 temperature（API 限制）
+      if (req.thinking.type === 'enabled') delete payload.temperature;
+    }
+    if (req.reasoning_effort !== undefined) payload.reasoning_effort = req.reasoning_effort;
     const body = JSON.stringify(payload);
     let resp: Response | null = null;
     let attempt = 0;

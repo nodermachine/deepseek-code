@@ -16,14 +16,16 @@ export interface ModelCapability {
   thinking: boolean;
   /** 是否支持并行工具调用（一次返回多个 tool_calls） */
   parallelToolCalls: boolean;
+  /** 默认思考强度（仅 thinking=true 时有效） */
+  defaultReasoningEffort?: 'low' | 'medium' | 'high';
 }
 
 /** 已知模型能力映射表 */
 const MODEL_CAPABILITIES: Record<string, ModelCapability> = {
-  'deepseek-v4-flash': { maxContext: 1_000_000, maxOutput: 16_000, toolCalls: true, thinking: true, parallelToolCalls: true },
-  'deepseek-v4-pro':   { maxContext: 1_000_000, maxOutput: 32_000, toolCalls: true, thinking: true, parallelToolCalls: true },
+  'deepseek-v4-flash': { maxContext: 1_000_000, maxOutput: 16_000, toolCalls: true, thinking: true, parallelToolCalls: true, defaultReasoningEffort: 'low' },
+  'deepseek-v4-pro':   { maxContext: 1_000_000, maxOutput: 32_000, toolCalls: true, thinking: true, parallelToolCalls: true, defaultReasoningEffort: 'medium' },
   'deepseek-chat':     { maxContext: 64_000,    maxOutput: 8_000,  toolCalls: true,  thinking: false, parallelToolCalls: false },
-  'deepseek-reasoner': { maxContext: 64_000,    maxOutput: 8_000,  toolCalls: false, thinking: true,  parallelToolCalls: false },
+  'deepseek-reasoner': { maxContext: 64_000,    maxOutput: 8_000,  toolCalls: false, thinking: true,  parallelToolCalls: false, defaultReasoningEffort: 'high' },
   'deepseek-coder':    { maxContext: 128_000,   maxOutput: 8_000,  toolCalls: true,  thinking: false, parallelToolCalls: false },
 };
 
