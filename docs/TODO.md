@@ -247,6 +247,139 @@ Type-check `config.json` on load. Right now malformed config silently falls thro
 
 ---
 
+## P6 — 深度对标 Claude Code（v0.5 目标）
+
+> 参照 `/Users/wanghengfei/Documents/workspace/claude-code/src` 源码分析得出。
+> Claude Code 规模：791KB main.tsx、85 hooks、43 tools、100+ commands、7 task types。
+
+### P6-A 高优（架构性）
+
+#### 30. Sub-agent 工具（AgentTool）
+
+**Effort:** 3 days
+**Why:** Claude Code 核心能力差距。支持模型选择、工具白名单、隔离执行。
+
+- 新工具 `Agent`: 启动子 agent 执行独立任务，返回结果
+- 子 agent 有独立 messages + 受限工具列表（默认只读）
+- 支持 `model` 参数选择（flash 做搜索、chat 做编辑）
+- 参考：`claude-code/src/tools/AgentTool/AgentTool.tsx`（1398行）
+
+#### 31. 完整成本追踪系统
+
+**Effort:** 1 day
+**Why:** 当前仅单轮 stderr 输出。Claude Code 有多模型分账 + 缓存收益 + 会话持久化。
+
+- CostTracker 类：按模型统计 input/output/cache_hit/cache_write tokens
+- USD 成本计算（含 DeepSeek 定价表）
+- 会话级持久化到 `.deepseek-code/sessions/<id>.cost.json`
+- `/usage` 命令展示累计成本
+- 参考：`claude-code/src/cost-tracker.ts`（324行）
+
+#### 32. Skills 条件激活（Conditional Skills）
+
+**Effort:** 2 days
+**Why:** Claude Code skills 支持 gitignore 风格的文件路径匹配条件激活。
+
+- YAML frontmatter 新增 `globs` 字段：`globs: ["**/*.tsx", "src/components/**"]`
+- 当 session 中 Read/Edit 过的文件匹配 glob 时自动激活
+- 分层来源优先级：managed > user > project > builtin
+- 动态发现：Edit 新文件时重新评估 skills 激活状态
+- 参考：`claude-code/src/skills/loadSkillsDir.ts`（1087行）
+
+#### 33. Memory 分层系统
+
+**Effort:** 2 days
+**Why:** 当前仅单文件 DEEPSEEK.md。Claude Code 有 4 种内存类型 + 漂移检测。
+
+- 内存类型：user（个人偏好）、project（项目规范）、reference（参考资料）
+- 存储位置：`~/.deepseek-code/memory/`（user）、`.deepseek-code/memory/`（project）
+- `/memory add <type> <content>` 命令
+- 内存截断：超过 200 行 / 25KB 时自动摘要
+- 参考：`claude-code/src/memdir/memdir.ts`（508行）
+
+### P6-B 中优（体验性）
+
+#### 34. 更多内置工具
+
+**Effort:** 3 days
+**Why:** Claude Code 有 ~50 工具 vs 我们 8 个。关键缺失：
+
+- `AskUser`: 模型主动向用户提问（当前只能被动等输入）
+- `LSP`: 语言服务器集成（go-to-definition、find-references）
+- `NotebookEdit`: Jupyter notebook 编辑
+- `WebSearch`: 搜索引擎集成（区别于 WebFetch 的页面抓取）
+
+#### 35. 命令系统扩展
+
+**Effort:** 2 days
+**Why:** Claude Code 100+ 命令 vs 我们 15 个。优先补齐：
+
+- `/diff` — 展示当前 session 产生的所有文件变更
+- `/context` — 展示当前上下文占用（token 数 + 消息数 + 文件列表）
+- `/usage` — 展示累计成本和 token 统计
+- `/undo` — 撤销上一次 Edit/Write 操作
+- `/review` — 对当前变更做安全/质量审查
+
+#### 36. 权限精细化
+
+**Effort:** 1.5 days
+**Why:** 当前全局 `allow *` 过于宽松。Claude Code 有 per-skill allowedTools。
+
+- Skills frontmatter 支持 `allowedTools: [Read, Grep, Bash]`
+- 子 agent 自动受限于父 skill 的 allowedTools
+- PermissionMode 枚举：`full | plan-only | read-only`
+- `/trust` 命令切换本 session 的信任级别
+
+#### 37. Git Worktree 隔离
+
+**Effort:** 1.5 days
+**Why:** Claude Code 对高风险操作使用独立 worktree 执行，避免污染主工作区。
+
+- 当 agent 要执行 >5 个文件的批量修改时，自动提议 worktree
+- `git worktree add .deepseek-code/worktree/<branch>` 创建隔离区
+- 修改完成后用户确认 merge 或丢弃
+- 参考：`claude-code/src/tools/EnterWorktreeTool`
+
+### P6-C 低优（锦上添花）
+
+#### 38. 快捷键系统
+
+**Effort:** 1.5 days
+**Why:** Claude Code 支持 Chord 组合键 + Vim 模式 + 用户自定义。
+
+- 默认绑定：`Ctrl+K` 清空输入、`Ctrl+L` 清屏、`Ctrl+R` 历史搜索
+- 用户配置：`~/.deepseek-code/keybindings.json`
+- Vim 模式支持（`config.vim = true`）
+
+#### 39. 语音输入
+
+**Effort:** 3 days
+**Why:** Claude Code 有完整 STT/TTS（97KB voice integration）。
+
+- 集成 Whisper API 做语音转文字
+- `--voice` 启动参数或 `/voice` toggle
+- 长按空格录音、松开发送
+
+#### 40. IDE 集成协议
+
+**Effort:** 2 days
+**Why:** Claude Code 支持 IDE 选区同步 + Diff 展示。
+
+- JSON-RPC server 模式：`deepseek --server --port 3721`
+- VSCode 扩展协议：选区推送、diff 预览、inline suggestion
+- 参考：`claude-code/src/hooks/useIDEIntegration.tsx`
+
+#### 41. 任务调度（Cron）
+
+**Effort:** 2 days
+**Why:** Claude Code 有 ScheduleCronTool 支持定时任务。
+
+- `/schedule "每天 9 点跑测试" "pnpm test"` 创建定时任务
+- 后台 daemon 执行，结果写入 session log
+- `/schedule list` / `/schedule delete <id>`
+
+---
+
 ## Non-goals / rejected
 
 - **Rewriting the agent loop to be "smarter"** — the bottleneck isn't the loop, it's the prompt + skills + verification rails around it.

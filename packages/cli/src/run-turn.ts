@@ -9,7 +9,7 @@ import type {
 import type { Logger } from '@deepseek-code/core';
 import {
   runAgentLoop, runPlanMode, needsCompact, compactMessages, truncateMessages,
-  DRY_RUN_SUFFIX,
+  DRY_RUN_SUFFIX, CostTracker,
 } from '@deepseek-code/core';
 import { renderAgentStream } from './render/stream.js';
 import { renderWithInk } from './ui/App.js';
@@ -140,14 +140,9 @@ export async function executeTurn(
 
   // Token 成本摘要（非 REPL 模式下在结束时输出）
   if (session.usage.total_tokens > 0) {
-    const hit = session.usage.prompt_cache_hit_tokens ?? 0;
-    const total = session.usage.prompt_tokens;
-    const cacheRate = total > 0 ? Math.round(hit / total * 100) : 0;
-    // DeepSeek V4 flash 定价：input $0.14/Mtok, output $2.19/Mtok, cache hit 1/10
-    const inputCost = ((total - hit) * 0.14 + hit * 0.014) / 1_000_000;
-    const outputCost = (session.usage.completion_tokens * 2.19) / 1_000_000;
-    const costStr = `$${(inputCost + outputCost).toFixed(4)}`;
-    process.stderr.write(`  tokens: ${session.usage.total_tokens.toLocaleString()} | ${costStr} | cache: ${cacheRate}%\n`);
+    const costTracker = new CostTracker();
+    costTracker.record(runModel, session.usage);
+    process.stderr.write(`  ${costTracker.summary()}\n`);
   }
 
   cleanupAbortedSession(session, sig);

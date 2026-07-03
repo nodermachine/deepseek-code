@@ -187,8 +187,15 @@ function resolveTrigger(
       const keywords = extractKeywords(fm, body, name);
       return { type: 'auto', keywords };
     }
+    case 'globs': {
+      const patterns = extractGlobs(fm);
+      return patterns.length > 0 ? { type: 'globs', patterns } : { type: 'command', name };
+    }
     case 'command':
     default:
+      // 即使 trigger 不是 globs，如果 frontmatter 中有 globs 字段，也尝试解析为 globs 类型
+      const fallbackGlobs = extractGlobs(fm);
+      if (fallbackGlobs.length > 0) return { type: 'globs', patterns: fallbackGlobs };
       return { type: 'command', name };
   }
 }
@@ -210,4 +217,15 @@ function extractKeywords(
     return htmlKw[1].split(',').map((k) => k.trim()).filter(Boolean);
   }
   return [name];
+}
+
+/** 从 frontmatter 提取 globs 字段（支持数组和逗号分隔字符串） */
+function extractGlobs(fm: Record<string, string | string[]>): string[] {
+  if (Array.isArray(fm.globs)) {
+    return fm.globs.filter((g) => typeof g === 'string' && g.trim().length > 0);
+  }
+  if (typeof fm.globs === 'string' && fm.globs.trim()) {
+    return fm.globs.split(',').map((g) => g.trim()).filter(Boolean);
+  }
+  return [];
 }

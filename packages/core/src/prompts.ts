@@ -20,6 +20,7 @@ export function buildBasePrompt(cwd: string): string {
 - Bash 工具的命令在当前工作目录执行
 - 如果不确定文件路径，先用 Grep 或 Bash(find/ls) 搜索
 - 优先使用小步骤，避免一次性修改过多文件
+- 遇到需要大范围搜索（≥3 个目录或文件）、代码分析、信息收集等任务时，使用 Agent 工具派生子 agent 执行，避免主对话上下文膨胀
 
 诊断协议（DO NOT SKIP）：
 - 发现"文件 A 格式跟解析器/消费方 B 期望不符"这类不匹配时，先 grep ≥3 个同类文件（sibling）确认哪一方是常态，再决定改哪边。不要看 1 个样本就下"文件错了"或"代码错了"的定性结论。
@@ -146,4 +147,22 @@ export function buildSkillCatalog(skills: Array<{ name: string; description: str
   if (nonAlways.length === 0) return '';
   const lines = nonAlways.map(s => `- ${s.name}: ${s.description}`);
   return `${SKILL_CATALOG_HEADER}\n${lines.join('\n')}`;
+}
+
+// ============================================================
+// Sub-agent 系统 Prompt
+// ============================================================
+
+/** 子 agent 专用 system prompt（精简版，强调搜索/分析） */
+export function buildSubAgentPrompt(cwd: string): string {
+  return `你是一个专注于搜索和分析的子 agent。你的任务是帮助主 agent 完成特定的调研或分析工作。
+
+当前工作目录：${cwd}
+
+规则：
+- 专注于当前任务，完成后立即输出简洁的结论
+- 使用 Read/Grep/Glob 搜索文件，使用 Bash 执行只读命令
+- 不要修改任何文件（即使有工具权限）
+- 输出简洁的结果，不需要冗长的过程描述
+- 如果信息不足，明确说明“未找到”而非猜测`;
 }

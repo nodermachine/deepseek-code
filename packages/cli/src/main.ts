@@ -14,7 +14,7 @@ import {
   buildSystemPrompt, SkillRegistry, HookManager, VERSION, lintSkills,
 } from '@deepseek-code/core';
 import type { Session } from '@deepseek-code/core';
-import { readTool, grepTool, bashTool, editTool, writeTool, globTool, webFetchTool, todoWriteTool, multiEditTool } from '@deepseek-code/tools';
+import { readTool, grepTool, bashTool, editTool, writeTool, globTool, webFetchTool, todoWriteTool, multiEditTool, agentTool } from '@deepseek-code/tools';
 import { makeAskPermission, makeHeadlessPermission } from './permission-prompt.js';
 import type { TrustLevel } from './permission-prompt.js';
 import { runLogin } from './login.js';
@@ -119,6 +119,7 @@ export async function main(argv: string[]): Promise<number> {
   registry.register(webFetchTool);
   registry.register(todoWriteTool);
   registry.register(multiEditTool);
+  registry.register(agentTool);
 
   const permission = new PermissionEngine({
     // 默认放行所有工具操作（危险命令由 blacklist + danger-guard hook 兆底）
@@ -126,6 +127,7 @@ export async function main(argv: string[]): Promise<number> {
       { tool: 'Write', matcher: '*', decision: 'allow' },
       { tool: 'Edit', matcher: '*', decision: 'allow' },
       { tool: 'Bash', matcher: '*', decision: 'allow' },
+      { tool: 'Agent', matcher: '*', decision: 'allow' },
     ],
     // 敏感路径：编辑关键文件时强制确认（即使全局 allow）
     sensitivePaths: config.sensitivePaths,

@@ -7,3 +7,4 @@ export { globTool } from './glob.js';
 export { webFetchTool } from './web-fetch.js';
 export { todoWriteTool, getTodos, resetTodos } from './todo-write.js';
 export { multiEditTool } from './multi-edit.js';
+export { agentTool } from './agent.js';

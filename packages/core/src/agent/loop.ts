@@ -67,10 +67,13 @@ export async function* runAgentLoop(opts: RunAgentLoopOpts): AsyncGenerator<Agen
   let enrichedInput = userInput;
   if (opts.skillRegistry) {
     const matched = opts.skillRegistry.matchByKeywords(userInput);
-    if (matched.length > 0) {
-      const skillContext = matched.map((s: Skill) => `[Skill: ${s.name}]\n${s.content}`).join('\n\n');
+    // Globs-trigger：匹配 session 中已读文件的 glob pattern
+    const globsMatched = opts.skillRegistry.matchByGlobs(session.readFiles);
+    const allMatched = [...matched, ...globsMatched];
+    if (allMatched.length > 0) {
+      const skillContext = allMatched.map((s: Skill) => `[Skill: ${s.name}]\n${s.content}`).join('\n\n');
       enrichedInput = `${userInput}\n\n---\n以下是相关技能上下文：\n${skillContext}`;
-      logger.info('auto-trigger skills matched', { skills: matched.map((s: Skill) => s.name) });
+      logger.info('auto-trigger skills matched', { skills: allMatched.map((s: Skill) => s.name) });
     }
   }
 
@@ -268,7 +271,12 @@ export async function* runAgentLoop(opts: RunAgentLoopOpts): AsyncGenerator<Agen
 
         let result: ToolResultEnvelope;
         try {
-          const r = await tool.execute(input, { cwd: process.cwd(), signal, logger, session: { readFiles: session.readFiles } });
+          const r = await tool.execute(input, {
+            cwd: process.cwd(), signal, logger,
+            session: { readFiles: session.readFiles },
+            // Sub-agent 支持：传递 provider/registry/model 给 Agent 工具
+            provider, toolRegistry: registry, model,
+          });
           result = r.ok ? { ok: true, output: r.output, display: r.display } : { ok: false, error: r.error };
         } catch (e: any) {
           result = { ok: false, error: e.message ?? 'execute_failed' };

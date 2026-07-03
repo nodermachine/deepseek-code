@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import type { Skill } from '../skills/types.js';
 import { getModelCapability } from '../provider/model-capabilities.js';
 import { buildBasePrompt, MODEL_HINT_NO_TOOLS, MODEL_HINT_THINKING, buildSkillCatalog } from '../prompts.js';
+import { loadMemoryDir } from './memdir.js';
 
 export interface LoadMemoryOpts {
   /** 当前工作目录 */
@@ -73,10 +74,16 @@ export function buildSystemPrompt(opts: BuildSystemPromptOpts): string {
 
   const parts = [base];
 
-  // DEEPSEEK.md memory
+  // DEEPSEEK.md memory（单文件，向后兼容）
   const memory = loadMemory(opts);
   if (memory) {
     parts.push(memory);
+  }
+
+  // Memory 目录（分层结构化内存，带 25KB 截断保护）
+  const memdir = loadMemoryDir(opts);
+  if (memdir) {
+    parts.push(memdir);
   }
 
   // always-on skills 注入（按名称字母排序，保证 prefix 稳定以利用 Prompt Cache）

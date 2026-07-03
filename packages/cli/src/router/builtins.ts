@@ -5,7 +5,8 @@
  */
 import pc from 'picocolors';
 import type { Session, SessionStore, SkillRegistry, Config, Provider } from '@deepseek-code/core';
-import { CommandRegistry, compactMessages, lintSkills, VERSION, commitMsgPrompt, prPrompt } from '@deepseek-code/core';
+import { CommandRegistry, compactMessages, lintSkills, VERSION, commitMsgPrompt, prPrompt, CostTracker, addMemoryEntry } from '@deepseek-code/core';
+import type { MemoryType } from '@deepseek-code/core';
 
 export interface BuiltinCtx {
   session: Session;
@@ -36,6 +37,7 @@ const BUILTINS: Array<{ name: string; description: string; argumentHint?: string
   { name: 'memory', description: '打开 DEEPSEEK.md 编辑', argumentHint: '[user]' },
   { name: 'init', description: '初始化项目配置（DEEPSEEK.md + commands 目录）' },
   { name: 'doctor', description: '自诊断：检查配置、工具、技能健全性' },
+  { name: 'usage', description: '展示当前会话的 token 消耗和成本统计' },
   { name: 'resume', description: 'REPL 内切换会话', argumentHint: '<id>' },
   { name: 'quit', description: '退出 REPL' },
 ];
@@ -242,6 +244,22 @@ export async function runBuiltin(
     case 'memory': {
       const path = await import('node:path');
       const os = await import('node:os');
+      // /memory add [type] <content> — 快速添加内存条目
+      if (args.trim().startsWith('add ')) {
+        const rest = args.trim().slice(4).trim();
+        // 解析可选类型前缀：/memory add user:内容 或 /memory add ref:内容
+        let memType: MemoryType = 'general';
+        let content = rest;
+        const typeMatch = rest.match(/^(user|project|ref):\s*(.+)$/s);
+        if (typeMatch) {
+          memType = typeMatch[1] as MemoryType;
+          content = typeMatch[2];
+        }
+        const filePath = addMemoryEntry({ type: memType, content, scope: 'project', cwd: ctx.cwd });
+        ctx.flashStatus(`✓ 已保存到 ${filePath}`);
+        return;
+      }
+      // /memory user — 编辑用户级 DEEPSEEK.md
       const target = args.trim() === 'user'
         ? path.join(os.homedir(), '.deepseek-code', 'DEEPSEEK.md')
         : path.join(ctx.cwd, 'DEEPSEEK.md');
@@ -392,6 +410,14 @@ export async function runBuiltin(
       ctx.session.startedAt = s.startedAt;
       ctx.session.lastActiveAt = s.lastActiveAt;
       ctx.flashStatus(`✓ 已切换到会话 ${s.id.slice(0, 8)}`);
+      return;
+    }
+    case 'usage': {
+      const tracker = new CostTracker();
+      if (ctx.session.usage.total_tokens > 0) {
+        tracker.record(ctx.getModel(), ctx.session.usage);
+      }
+      w('\n' + tracker.report() + '\n\n');
       return;
     }
     case 'cancel':
